@@ -597,6 +597,7 @@ Sol_SelfAdvection3DDevice<T>::initialize_storage(int nx, int ny, int nz, double 
   // u,v,w must be the proper dimensions, i.e. staggered grid
   if (u_val->nx() != nx+1 || u_val->ny() != ny || u_val->nz() != nz) {
     printf("[ERROR] Sol_SelfAdvection3DDevice::initialize_storage - u dimensions mismatch\n");
+    printf("details : u_val->nx = %d, nx+1 = %d, u_val->ny() = %d, ny = %d, u_val->nz() = %d, nz = %d\n",u_val->nx(),nx+1,u_val->ny(),ny,u_val->nz(), nz);
     return false;
   }
 

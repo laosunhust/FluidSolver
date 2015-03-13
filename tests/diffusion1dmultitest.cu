@@ -44,7 +44,7 @@ void run()
   UNITTEST_ASSERT_TRUE(host.init(N, 1));
 
   for (int T=0; T < 800; T++) {
-    UNITTEST_ASSERT_TRUE(solver.advance(1));
+    UNITTEST_ASSERT_TRUE(solver.advance(0.1));
   }
   ThreadManager::barrier_and_fence();
 

@@ -33,6 +33,7 @@ CUDA_ADD_EXECUTABLE(utest
 	utest.cu
 	testframework.cpp 
 	testframework.h
+        #CoarrayMPItest.cu 
 	diffusion1dtest.cpp
 	diffusion3dtest.cpp
 	netcdftest.cpp
@@ -40,6 +41,7 @@ CUDA_ADD_EXECUTABLE(utest
 	grid1dtest.cpp
 	samplingtest.cpp
 	advection3dtest.cpp
+        advectiondiffusion3dtest.cpp
 	advection3ddoubletest.cpp
 	mgtest.cpp
 	projecttest.cpp
@@ -55,37 +57,41 @@ CUDA_ADD_EXECUTABLE(utest
 	diffusion1dmultitest.cu
 	diffusion3dmultitest.cu
 	coarraytest.cu
-	mgmultitest.cu)
+	#mgmultitest.cu
+        )
 
+#ADD_TEST(CoarrayTest ${EXECUTABLE_OUTPUT_PATH}/utest MultiReduceTest)
+#ADD_TEST(CoarrayMPITest ${EXECUTABLE_OUTPUT_PATH}/utest MultiReduceTest)
 ADD_TEST(Diffusion1DTest ${EXECUTABLE_OUTPUT_PATH}/utest Diffusion1DTest)
 ADD_TEST(Diffusion3DTest ${EXECUTABLE_OUTPUT_PATH}/utest Diffusion3DTest)
-ADD_TEST(Advection3DTest ${EXECUTABLE_OUTPUT_PATH}/utest Advection3DTest Advection3DSymmetryTest)
-ADD_TEST(Grid1DTest ${EXECUTABLE_OUTPUT_PATH}/utest Grid1DReduceTest Reduce1DTimingTest)
-ADD_TEST(Grid3DTest ${EXECUTABLE_OUTPUT_PATH}/utest Grid3DTest Grid3DReduceTest Reduce3DTimingTest)
-ADD_TEST(MultigridTest ${EXECUTABLE_OUTPUT_PATH}/utest MultigridTest)
-ADD_TEST(ProjectTest ${EXECUTABLE_OUTPUT_PATH}/utest ProjectTest)
-ADD_TEST(Advection3DDoubleTest ${EXECUTABLE_OUTPUT_PATH}/utest Advection3DDoubleTest Advection3DDoubleSymmetryTest Advection3DDoubleSwirlTest)
-ADD_TEST(Grid1DDoubleTest ${EXECUTABLE_OUTPUT_PATH}/utest Grid1DReduceDoubleTest Reduce1DDoubleTimingTest)
-ADD_TEST(Grid3DDoubleTest ${EXECUTABLE_OUTPUT_PATH}/utest Grid3DTest Grid3DReduceDoubleTest Reduce3DDoubleTimingTest)
-ADD_TEST(MultigridDoubleTest ${EXECUTABLE_OUTPUT_PATH}/utest MultigridDoubleTest)
-ADD_TEST(MultigridMixedTest ${EXECUTABLE_OUTPUT_PATH}/utest MultigridMixedTest)
-ADD_TEST(ProjectDoubleTest ${EXECUTABLE_OUTPUT_PATH}/utest ProjectDoubleTest)
-ADD_TEST(SamplingTest ${EXECUTABLE_OUTPUT_PATH}/utest SamplingTest)
-ADD_TEST(NSTest ${EXECUTABLE_OUTPUT_PATH}/utest NSTest)
-ADD_TEST(LockExTest ${EXECUTABLE_OUTPUT_PATH}/utest LockExTest LockExDoubleTest)
-ADD_TEST(PCGTest ${EXECUTABLE_OUTPUT_PATH}/utest PCGDoubleTest)
+#ADD_TEST(AdvectionDiffusion3DTest ${EXECUTABLE_OUTPUT_PATH}/utest AdvectionDiffusion3DTest)
+#ADD_TEST(Advection3DTest ${EXECUTABLE_OUTPUT_PATH}/utest Advection3DTest Advection3DSymmetryTest)
+#ADD_TEST(Grid1DTest ${EXECUTABLE_OUTPUT_PATH}/utest Grid1DReduceTest Reduce1DTimingTest)
+#ADD_TEST(Grid3DTest ${EXECUTABLE_OUTPUT_PATH}/utest Grid3DTest Grid3DReduceTest Reduce3DTimingTest)
+#ADD_TEST(MultigridTest ${EXECUTABLE_OUTPUT_PATH}/utest MultigridTest)
+#ADD_TEST(ProjectTest ${EXECUTABLE_OUTPUT_PATH}/utest ProjectTest)
+#ADD_TEST(Advection3DDoubleTest ${EXECUTABLE_OUTPUT_PATH}/utest Advection3DDoubleTest Advection3DDoubleSymmetryTest Advection3DDoubleSwirlTest)
+#ADD_TEST(Grid1DDoubleTest ${EXECUTABLE_OUTPUT_PATH}/utest Grid1DReduceDoubleTest Reduce1DDoubleTimingTest)
+#ADD_TEST(Grid3DDoubleTest ${EXECUTABLE_OUTPUT_PATH}/utest Grid3DTest Grid3DReduceDoubleTest Reduce3DDoubleTimingTest)
+#ADD_TEST(MultigridDoubleTest ${EXECUTABLE_OUTPUT_PATH}/utest MultigridDoubleTest)
+#ADD_TEST(MultigridMixedTest ${EXECUTABLE_OUTPUT_PATH}/utest MultigridMixedTest)
+#ADD_TEST(ProjectDoubleTest ${EXECUTABLE_OUTPUT_PATH}/utest ProjectDoubleTest)
+#ADD_TEST(SamplingTest ${EXECUTABLE_OUTPUT_PATH}/utest SamplingTest)
+#ADD_TEST(NSTest ${EXECUTABLE_OUTPUT_PATH}/utest NSTest)
+#ADD_TEST(LockExTest ${EXECUTABLE_OUTPUT_PATH}/utest LockExTest LockExDoubleTest)
+#ADD_TEST(PCGTest ${EXECUTABLE_OUTPUT_PATH}/utest PCGDoubleTest)
 
 IF (OCU_NETCDF_ENABLED)
   ADD_TEST(NetCDFTest ${EXECUTABLE_OUTPUT_PATH}/utest NetCDFTest GridNetCDFTest)
 ENDIF (OCU_NETCDF_ENABLED)
 
 IF (OCU_OMP_ENABLED)
-  ADD_TEST(Diffusion1DMultiTest ${EXECUTABLE_OUTPUT_PATH}/utest -multi Diffusion1DMultiTest)
-  ADD_TEST(Diffusion3DMultiTest ${EXECUTABLE_OUTPUT_PATH}/utest -multi Diffusion3DMultiTest)
-  ADD_TEST(CoArray1DTest ${EXECUTABLE_OUTPUT_PATH}/utest -repeat 10 -multi CoArray1DTest)
-  ADD_TEST(CoArray3DTest ${EXECUTABLE_OUTPUT_PATH}/utest -repeat 10 -multi CoArray3DTest DoubleTransferTest)
-  ADD_TEST(MultiReduceTest ${EXECUTABLE_OUTPUT_PATH}/utest -multi MultiReduceTest)
-  ADD_TEST(MultigridMultiTest ${EXECUTABLE_OUTPUT_PATH}/utest -multi MultigridMultiTest)
+ # ADD_TEST(Diffusion1DMultiTest ${EXECUTABLE_OUTPUT_PATH}/utest -multi Diffusion1DMultiTest)
+ # ADD_TEST(Diffusion3DMultiTest ${EXECUTABLE_OUTPUT_PATH}/utest -multi Diffusion3DMultiTest)
+ # ADD_TEST(CoArray1DTest ${EXECUTABLE_OUTPUT_PATH}/utest -repeat 10 -multi CoArray1DTest)
+ # ADD_TEST(CoArray3DTest ${EXECUTABLE_OUTPUT_PATH}/utest -repeat 10 -multi CoArray3DTest DoubleTransferTest)
+ # ADD_TEST(MultiReduceTest ${EXECUTABLE_OUTPUT_PATH}/utest -multi MultiReduceTest)
+ # ADD_TEST(MultigridMultiTest ${EXECUTABLE_OUTPUT_PATH}/utest -multi MultigridMultiTest)
 ENDIF (OCU_OMP_ENABLED)
 
 TARGET_LINK_LIBRARIES(utest ocuequation ocustorage ocuutil ${OCU_REQUIRED_LIBS})

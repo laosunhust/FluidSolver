@@ -18,6 +18,7 @@
 #include "ocuequation/eqn_diffusion3d.h"
 #include "ocustorage/coarray.h"
 #include "ocustorage/gridnetcdf.h"
+#include <iostream>
 
 using namespace ocu;
 
@@ -27,7 +28,9 @@ DECLARE_UNITTEST_MULTIGPU_DOUBLE_BEGIN(Diffusion3DMultiTest);
 void run()
 {
   int tid = ThreadManager::this_image();
-
+  
+  std::cout<<"this image id = "<<tid<<std::endl;
+  
   BoundaryCondition example;
   example.type = BC_PERIODIC;
 
@@ -47,7 +50,6 @@ void run()
   params.initial_values.init(nx, ny, nz, 1, 1, 1);
   params.initial_values.clear(tid);
 
-
   Eqn_Diffusion3DCo<double> solver("solver");
   UNITTEST_ASSERT_TRUE(solver.set_parameters(params));
   double total_before;
@@ -65,9 +67,10 @@ void run()
   double total_after;
   solver.density().co_reduce_sum(total_after);
   printf("before = %f, after = %f\n", total_before, total_after);
-
+  
   Grid3DHostD d_diff;
   d_diff.init_congruent(solver.density());
+  std::cout<<"nx = "<<solver.nx()<<"ny = "<<solver.ny()<<"nz = "<<solver.nz()<<std::endl;
   d_diff.copy_all_data(solver.density());
 /*
   if (tid == 0) {

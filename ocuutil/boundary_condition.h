@@ -18,107 +18,158 @@
 #define __OCU_UTIL_BOUNDARY_CONDITION_H__
 
 #include "ocuutil/defines.h"
-
+#include <vector>
 
 namespace ocu {
 
-
 enum BoundaryConditionType {
-  BC_INVALID,
-  BC_NONE,
-  BC_PERIODIC,
-  BC_DIRICHELET,
-  BC_NEUMANN,
-  BC_SECOND_DERIV,
-  BC_DIRICHELET_AND_NEUMANN,
-  BC_FORCED_INFLOW_VARIABLE_SLIP,
-  BC_SCALAR_SLIP, // the scalar bc's that apply to the tangential part of a MAC grid
+	BC_INVALID,
+	BC_NONE,
+	BC_PERIODIC,
+	BC_DIRICHELET,
+	BC_NEUMANN,
+	BC_SECOND_DERIV,
+	BC_DIRICHELET_AND_NEUMANN,
+	BC_FORCED_INFLOW_VARIABLE_SLIP,
+	BC_SCALAR_SLIP, // the scalar bc's that apply to the tangential part of a MAC grid
 };
 
 struct BoundaryCondition {
-  BoundaryConditionType type;  // what value is to be constrained
-  float value;                // the constraint value, if applicable.
-  float aux_value;            // additional the constraint value, if applicable.
+	BoundaryConditionType type;  // what value is to be constrained
+	float value;                // the constraint value, if applicable.
+	float aux_value;          // additional the constraint value, if applicable.
 
-  BoundaryCondition() {
-    type = BC_INVALID;
-    value = aux_value = 0;
-  }
+	BoundaryCondition() {
+		type = BC_INVALID;
+		value = aux_value = 0;
+	}
 
-  OCU_HOSTDEVICE  bool check_type(BoundaryConditionType t) const {
-    return t == type;
-  }
+	OCU_HOSTDEVICE bool check_type(BoundaryConditionType t) const {
+		return t == type;
+	}
 
-  OCU_HOSTDEVICE  bool check_type(BoundaryConditionType t1, BoundaryConditionType t2) const {
-    return t1 == type || t2 == type;
-  }
+	OCU_HOSTDEVICE bool check_type(BoundaryConditionType t1,
+			BoundaryConditionType t2) const {
+		return t1 == type || t2 == type;
+	}
 
-  OCU_HOSTDEVICE  bool check_type(BoundaryConditionType t1, BoundaryConditionType t2, BoundaryConditionType t3) const {
-    return t1 == type || t2 == type || t3 == type;
-  }
+	OCU_HOSTDEVICE bool check_type(BoundaryConditionType t1,
+			BoundaryConditionType t2, BoundaryConditionType t3) const {
+		return t1 == type || t2 == type || t3 == type;
+	}
 
-  OCU_HOSTDEVICE  bool check_type(BoundaryConditionType t1, BoundaryConditionType t2, BoundaryConditionType t3, BoundaryConditionType t4) const {
-    return t1 == type || t2 == type || t3 == type || t4 == type;
-  }
+	OCU_HOSTDEVICE bool check_type(BoundaryConditionType t1,
+			BoundaryConditionType t2, BoundaryConditionType t3,
+			BoundaryConditionType t4) const {
+		return t1 == type || t2 == type || t3 == type || t4 == type;
+	}
 };
-
-
 
 struct BoundaryConditionSet {
-  //**** PUBLIC STATE ****
-  BoundaryCondition xpos, xneg, ypos, yneg, zpos, zneg;
+	//**** PUBLIC STATE ****
+	BoundaryCondition xpos, xneg, ypos, yneg, zpos, zneg;
 
-  //**** MANAGER ****
-  BoundaryConditionSet() { }
-  BoundaryConditionSet(
-    const BoundaryCondition &xpos_val, const BoundaryCondition &xneg_val, const BoundaryCondition &ypos_val, 
-    const BoundaryCondition &yneg_val, const BoundaryCondition &zpos_val, const BoundaryCondition &zneg_val) : 
-      xpos(xpos_val), xneg(xneg_val), ypos(ypos_val), yneg(yneg_val), zpos(zpos_val), zneg(zneg_val) { }
-  BoundaryConditionSet(const BoundaryCondition &val) : 
-    xpos(val), xneg(val), ypos(val), yneg(val), zpos(val), zneg(val) { }
+	//**** MANAGER ****
+	BoundaryConditionSet() {
+	}
+	BoundaryConditionSet(const BoundaryCondition &xpos_val,
+			const BoundaryCondition &xneg_val,
+			const BoundaryCondition &ypos_val,
+			const BoundaryCondition &yneg_val,
+			const BoundaryCondition &zpos_val,
+			const BoundaryCondition &zneg_val) :
+			xpos(xpos_val), xneg(xneg_val), ypos(ypos_val), yneg(yneg_val), zpos(
+					zpos_val), zneg(zneg_val) {
+	}
+	BoundaryConditionSet(const BoundaryCondition &val) :
+			xpos(val), xneg(val), ypos(val), yneg(val), zpos(val), zneg(val) {
+	}
 
-  //**** PUBLIC INTERFACE ****
-  OCU_HOSTDEVICE  bool check_type(BoundaryConditionType t) const {
-    return xpos.check_type(t) && xneg.check_type(t) && ypos.check_type(t) && yneg.check_type(t) && zpos.check_type(t) && zneg.check_type(t);
-  }
+	//**** PUBLIC INTERFACE ****
+	OCU_HOSTDEVICE bool check_type(BoundaryConditionType t) const {
+		return xpos.check_type(t) && xneg.check_type(t) && ypos.check_type(t)
+				&& yneg.check_type(t) && zpos.check_type(t)
+				&& zneg.check_type(t);
+	}
 
-  OCU_HOSTDEVICE  bool check_type(BoundaryConditionType t1, BoundaryConditionType t2) const {
-    return xpos.check_type(t1,t2) && xneg.check_type(t1,t2) && ypos.check_type(t1,t2) && yneg.check_type(t1,t2) && zpos.check_type(t1,t2) && zneg.check_type(t1,t2);
-  }
+	OCU_HOSTDEVICE bool check_type(BoundaryConditionType t1,
+			BoundaryConditionType t2) const {
+		return xpos.check_type(t1, t2) && xneg.check_type(t1, t2)
+				&& ypos.check_type(t1, t2) && yneg.check_type(t1, t2)
+				&& zpos.check_type(t1, t2) && zneg.check_type(t1, t2);
+	}
 
-  OCU_HOSTDEVICE  bool check_type(BoundaryConditionType t1, BoundaryConditionType t2, BoundaryConditionType t3) const {
-    return xpos.check_type(t1,t2,t3) && xneg.check_type(t1,t2,t3) && ypos.check_type(t1,t2,t3) && yneg.check_type(t1,t2,t3) && zpos.check_type(t1,t2,t3) && zneg.check_type(t1,t2,t3);
-  }
+	OCU_HOSTDEVICE bool check_type(BoundaryConditionType t1,
+			BoundaryConditionType t2, BoundaryConditionType t3) const {
+		return xpos.check_type(t1, t2, t3) && xneg.check_type(t1, t2, t3)
+				&& ypos.check_type(t1, t2, t3) && yneg.check_type(t1, t2, t3)
+				&& zpos.check_type(t1, t2, t3) && zneg.check_type(t1, t2, t3);
+	}
 
-  OCU_HOSTDEVICE  bool check_type(BoundaryConditionType t1, BoundaryConditionType t2, BoundaryConditionType t3, BoundaryConditionType t4) const {
-    return xpos.check_type(t1,t2,t3,t4) && xneg.check_type(t1,t2,t3,t4) && ypos.check_type(t1,t2,t3,t4) && yneg.check_type(t1,t2,t3,t4) && zpos.check_type(t1,t2,t3,t4) && zneg.check_type(t1,t2,t3,t4);
-  }
+	OCU_HOSTDEVICE bool check_type(BoundaryConditionType t1,
+			BoundaryConditionType t2, BoundaryConditionType t3,
+			BoundaryConditionType t4) const {
+		return xpos.check_type(t1, t2, t3, t4)
+				&& xneg.check_type(t1, t2, t3, t4)
+				&& ypos.check_type(t1, t2, t3, t4)
+				&& yneg.check_type(t1, t2, t3, t4)
+				&& zpos.check_type(t1, t2, t3, t4)
+				&& zneg.check_type(t1, t2, t3, t4);
+	}
 
-  OCU_HOST void make_homogeneous() {
-    xpos.value = 0; 
-    xpos.aux_value = 0;
-    xneg.value = 0; 
-    xneg.aux_value = 0;
-    ypos.value = 0; 
-    ypos.aux_value = 0;
-    yneg.value = 0; 
-    yneg.aux_value = 0;
-    zpos.value = 0; 
-    zpos.aux_value = 0;
-    zneg.value = 0; 
-    zneg.aux_value = 0;
-  }
+	OCU_HOST void make_homogeneous() {
+		xpos.value = 0;
+		xpos.aux_value = 0;
+		xneg.value = 0;
+		xneg.aux_value = 0;
+		ypos.value = 0;
+		ypos.aux_value = 0;
+		yneg.value = 0;
+		yneg.aux_value = 0;
+		zpos.value = 0;
+		zpos.aux_value = 0;
+		zneg.value = 0;
+		zneg.aux_value = 0;
+	}
 
 };
 
+/*
+ * This struct is important for Method of Manufactured Solutions.
+ * There are different rules for mapping boundary value to 2D array.
+ * if direction = xpos or xneg : [Y][Z]
+ * if direction = ypos or yneg : [X][Z]
+ * if direction = zpos or zneg : [X][Y]
+ */
 
+struct DetailedDirichletBoundaryCondition {
+	std::vector<std::vector<double> > values;
+	BoundaryConditionType type() {
+		return BC_DIRICHELET;
+	}
+};
 
+/*
+ * Set of six boundary conditions for six different directions
+ */
 
-
-
+struct DetailedDirichletBoundaryConditionSet {
+	DetailedDirichletBoundaryCondition xpos, xneg, ypos, yneg, zpos, zneg;
+	DetailedDirichletBoundaryConditionSet() {
+	}
+	DetailedDirichletBoundaryConditionSet(
+			const DetailedDirichletBoundaryCondition &xpos_val,
+			const DetailedDirichletBoundaryCondition &xneg_val,
+			const DetailedDirichletBoundaryCondition &ypos_val,
+			const DetailedDirichletBoundaryCondition &yneg_val,
+			const DetailedDirichletBoundaryCondition &zpos_val,
+			const DetailedDirichletBoundaryCondition &zneg_val) :
+			xpos(xpos_val), xneg(xneg_val), ypos(ypos_val), yneg(yneg_val), zpos(
+					zpos_val), zneg(zneg_val) {
+	}
+};
 
 } // end namespace
-
 
 #endif
 

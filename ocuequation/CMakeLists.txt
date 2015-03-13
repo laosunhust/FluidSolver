@@ -23,6 +23,8 @@ CUDA_ADD_LIBRARY(ocuequation
   eqn_diffusion1d.h
   eqn_diffusion1d.cpp
   eqn_diffusion1dco.cu
+  eqn_advectiondiffusion3d.cu
+  eqn_advectiondiffusion3d.h
   eqn_incompressns3d.h
   eqn_incompressns3d.cu
   eqn_scalaradvection3d.h

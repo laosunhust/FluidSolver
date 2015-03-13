@@ -16,185 +16,234 @@
 
 #include "ocustorage/coarray.h"
 #include "tests/testframework.h"
+#include "ocustorage/coarraympi.h"
 
 void do_error() {
 
 #ifdef OCU_OMP
-  const char *OMP = "";
+	const char *OMP = "";
 #else
-  const char *OMP = "[DISABLED] ";
+	const char *OMP = "[DISABLED] ";
 #endif
 
-  printf("utest [option] [test1] [test2] ...\n");
-  printf("Options are:\n");
-  printf(" -gpu N     Run on the numbered GPU.  Can also set via env var OCU_UTEST_GPU.  Default value is 0.\n");
-  printf(" -help      Print this message\n");
-  printf(" -multi     %sRun in multigpu mode.  Only multi-gpu-enabled tests will run.\n", OMP );
-  printf(" -numgpus N %sSet GPU count for multi gpu mode.  Can also set via env var OCU_UTEST_MULTI.  Default value is 2.\n", OMP);
-  printf(" -repeat N  Repeat all tests N times\n");
-  printf("\n");
-  printf("Current tests are:\n");
-  UnitTestDriver::s_driver().print_tests();
+	printf("utest [option] [test1] [test2] ...\n");
+	printf("Options are:\n");
+	printf(
+			" -gpu N     Run on the numbered GPU.  Can also set via env var OCU_UTEST_GPU.  Default value is 0.\n");
+	printf(" -help      Print this message\n");
+	printf(
+			" -multi     %sRun in multigpu mode.  Only multi-gpu-enabled tests will run.\n",
+			OMP);
+	printf(
+			" -mpion     %sRun in mpi_multigpu mode.  Only mpi_multigpu-enabled tests will run.\n",
+			OMP);
+	printf(
+			" -numgpus N %sSet GPU count for multi gpu mode.  Can also set via env var OCU_UTEST_MULTI.  Default value is 2.\n",
+			OMP);
+	printf(" -repeat N  Repeat all tests N times\n");
+	printf("\n");
+	printf("Current tests are:\n");
+	UnitTestDriver::s_driver().print_tests();
 
-  exit(-1);
+	exit(-1);
 }
 
+int main(int argc, char **argv) {
+	int dev_cnt;
+	cudaGetDeviceCount(&dev_cnt);
 
-int main(int argc, char **argv)
-{
-  int dev_cnt;
-  cudaGetDeviceCount(&dev_cnt);
+	int gpu = getenv("OCU_UTEST_GPU") ? atoi(getenv("OCU_UTEST_GPU")) : 0;
+	int num_gpus =
+			getenv("OCU_UTEST_MULTI") ?
+					atoi(getenv("OCU_UTEST_MULTI")) : dev_cnt;
+	bool do_multi = false;
+	bool do_mpi = false;
 
-  int gpu = getenv("OCU_UTEST_GPU") ? atoi(getenv("OCU_UTEST_GPU")) : 0;
-  int num_gpus = getenv("OCU_UTEST_MULTI") ? atoi(getenv("OCU_UTEST_MULTI")) : dev_cnt;
-  bool do_multi = false;
+	int unprocessed_args = argc - 1;
+	int cur_arg = 1;
+	int repeat = 1;
 
-  int unprocessed_args = argc-1;
-  int cur_arg = 1;
-  int repeat = 1;
+	while (cur_arg < argc && argv[cur_arg][0] == '-') {
 
-  while(cur_arg < argc && argv[cur_arg][0] == '-') {
+		if (strcmp(argv[cur_arg], "-gpu") == 0) {
+			cur_arg++;
+			unprocessed_args--;
 
-    if (strcmp(argv[cur_arg], "-gpu")==0) {
-      cur_arg++;
-      unprocessed_args--;
+			if (cur_arg < argc) {
+				gpu = atoi(argv[cur_arg]);
+			} else
+				do_error();
+		}
 
-      if (cur_arg < argc) {
-        gpu = atoi(argv[cur_arg]);
-      }
-      else do_error();
-    }
-
-    if (strcmp(argv[cur_arg], "-numgpus")==0) {
+		if (strcmp(argv[cur_arg], "-numgpus") == 0) {
 #ifndef OCU_OMP
-      printf("[ERROR] -numgpus option invalid when compiled with OCU_OMP_ENABLED FALSE");
-      do_error();
+			printf(
+					"[ERROR] -numgpus option invalid when compiled with OCU_OMP_ENABLED FALSE");
+			do_error();
 #else
-      cur_arg++;
-      unprocessed_args--;
+			cur_arg++;
+			unprocessed_args--;
 
-      if (cur_arg < argc) {
-        num_gpus = atoi(argv[cur_arg]);
-      }
-      else do_error();
+			if (cur_arg < argc) {
+				num_gpus = atoi(argv[cur_arg]);
+			}
+			else do_error();
 #endif
-    }
+		}
 
-    if (strcmp(argv[cur_arg], "-repeat")==0) {
-      cur_arg++;
-      unprocessed_args--;
+		if (strcmp(argv[cur_arg], "-repeat") == 0) {
+			cur_arg++;
+			unprocessed_args--;
 
-      if (cur_arg < argc) {
-        repeat = atoi(argv[cur_arg]);
-      }
-      else do_error();
-    }
+			if (cur_arg < argc) {
+				repeat = atoi(argv[cur_arg]);
+			} else
+				do_error();
+		}
 
-    if (strcmp(argv[cur_arg], "-multi")==0) {
+		if (strcmp(argv[cur_arg], "-multi") == 0) {
 #ifndef OCU_OMP
-      printf("[ERROR] -multi option invalid when compiled with OCU_OMP_ENABLED FALSE");
-      do_error();
+			printf(
+					"[ERROR] -multi option invalid when compiled with OCU_OMP_ENABLED FALSE");
+			do_error();
 #else
-      do_multi = true;
+			do_multi = true;
 #endif
-    }
+		}
 
-    if (strcmp(argv[cur_arg], "-help")==0) {
-      do_error();
-    }
+		if (strcmp(argv[cur_arg], "-mpion") == 0) {
+#ifndef OCU_MPI
+			printf(
+					"[ERROR] -mpion option invalid when compiled with OCU_MPI_ENABLED FALSE");
+			do_error();
+#else
+			do_mpi = true;
+#endif
+		}
 
-    cur_arg++;
-    unprocessed_args--;
-  }
+		if (strcmp(argv[cur_arg], "-help") == 0) {
+			do_error();
+		}
 
-  UnitTestDriver::s_driver().set_multi(do_multi);
+		cur_arg++;
+		unprocessed_args--;
+	}
 
-  if (do_multi) {
+	UnitTestDriver::s_driver().set_multi(do_multi);
+
+	if (do_multi) {
 
 #ifndef OCU_OMP
-    printf("[ERROR] Cannot run in multi mode when compiled with OCU_OMP_ENABLED FALSE\n");
+		printf(
+				"[ERROR] Cannot run in multi mode when compiled with OCU_OMP_ENABLED FALSE\n");
 #else
 
-    // start n threads, init all multithreading stuff, etc.
-    printf("[INFO] Running in multi-GPU mode with %d devices\n", num_gpus);
+		// start n threads, init all multithreading stuff, etc.
+		printf("[INFO] Running in multi-GPU mode with %d devices\n", num_gpus);
 
-    if (!ocu::CoArrayManager::initialize(num_gpus)) {
-      printf("[ERROR] Could not initialize CoArrayManager\n");
-      exit(-1);
-    }
+		if (!ocu::CoArrayManager::initialize(num_gpus)) {
+			printf("[ERROR] Could not initialize CoArrayManager\n");
+			exit(-1);
+		}
 
-    if (!ocu::ThreadManager::initialize(num_gpus)) {
-      printf("[ERROR] Could not initialize ThreadManager\n");
-      exit(-1);
-    }
+		if (!ocu::ThreadManager::initialize(num_gpus)) {
+			printf("[ERROR] Could not initialize ThreadManager\n");
+			exit(-1);
+		}
 
 #pragma omp parallel
-    {
-      if (!ocu::ThreadManager::initialize_image(ocu::ThreadManager::this_image())) {
-        printf("[ERROR] Could not initialize ThreadManager image %d\n", ocu::ThreadManager::this_image());
-        exit(-1);
-      }
+		{
+			if (!ocu::ThreadManager::initialize_image(ocu::ThreadManager::this_image())) {
+				printf("[ERROR] Could not initialize ThreadManager image %d\n", ocu::ThreadManager::this_image());
+				exit(-1);
+			}
 
-      if (!ocu::CoArrayManager::initialize_image(ocu::ThreadManager::this_image())) {
-        printf("[ERROR] Could not initialize CoArrayManager image %d\n", ocu::ThreadManager::this_image());
-        exit(-1);
-      }
+			if (!ocu::CoArrayManager::initialize_image(ocu::ThreadManager::this_image())) {
+				printf("[ERROR] Could not initialize CoArrayManager image %d\n", ocu::ThreadManager::this_image());
+				exit(-1);
+			}
 
+			if (unprocessed_args == 0) {
+				for (int r=0; r < repeat; r++) {
+					if (!UnitTestDriver::s_driver().run_all_tests())
+					exit(-1);
+				}
+			}
+			else {
+				std::vector<std::string> tests;
+				for (int i=argc-unprocessed_args; i < argc; i++)
+				tests.push_back(argv[i]);
 
-      if (unprocessed_args == 0) {
-        for (int r=0; r < repeat; r++) {
-          if (!UnitTestDriver::s_driver().run_all_tests())
-            exit(-1);
-        }
-      }
-      else {
-        std::vector<std::string> tests;
-        for (int i=argc-unprocessed_args; i < argc; i++)
-          tests.push_back(argv[i]);
-
-        for (int r=0; r < repeat; r++) {
-          if (!UnitTestDriver::s_driver().run_tests(tests))
-            exit(-1);
-        }
-      }
-    }
+				for (int r=0; r < repeat; r++) {
+					if (!UnitTestDriver::s_driver().run_tests(tests))
+					{
+						ocu::ThreadManager::barrier_and_fence();
+						if(ocu::ThreadManager::this_image()==0)
+						{
+							exit(-1);
+						}
+					}
+				}
+			}
+		}
 #endif
-  }
-  else {
+	} else {
 
-    if (!ocu::ThreadManager::initialize(1)) {
-      printf("[ERROR] Could not initialize ThreadManager\n");
-      exit(-1);
-    }
+		// if MPI mode is enabled
+		if (do_mpi) {
+			printf("[INFO] Running in MPI-GPU mode with %d devices\n",
+					num_gpus);
+			int rank, size;
+			MPI::Init(argc, argv);
 
-    if (!ocu::ThreadManager::initialize_image(gpu)) {
-      printf("[ERROR] Could not initialize ThreadManager on gpu %d\n", gpu);
-      exit(-1);
-    }
+			//MPI_Comm_rank(MPI_COMM_WORLD,  &rank);
+			//MPI_Comm_size(MPI_COMM_WORLD,  &size);
+			//ocu::CoarrayMPIManager mpiManager(rank,size);
+			//mpiManager.printmyinfo();
+			//cout<<"Total number of processors MPI initialized: "<<size<<endl;
+			//cout<<"I am processor No."<<rank<<endl;
+			if (unprocessed_args == 0) {
+				for (int r = 0; r < repeat; r++) {
+					if (!UnitTestDriver::s_driver().run_MPI_enabled_tests())
+						exit(-1);
+				}
+			}
 
-    printf("[INFO] Running on GPU %d\n", gpu);
+			MPI::Finalize();
+		} else {
+			if (!ocu::ThreadManager::initialize(1)) {
+				printf("[ERROR] Could not initialize ThreadManager\n");
+				exit(-1);
+			}
 
-    // call this once to force everything to initialize so any timing results are not skewed
-    cudaFree(0);
+			if (!ocu::ThreadManager::initialize_image(gpu)) {
+				printf("[ERROR] Could not initialize ThreadManager on gpu %d\n",
+						gpu);
+				exit(-1);
+			}
 
-    if (unprocessed_args == 0) {
-      for (int r=0; r < repeat; r++) {
-        if (!UnitTestDriver::s_driver().run_single_gpu_tests())
-          exit(-1);
-      }
-    }
-    else {
-      std::vector<std::string> tests;
-      for (int i=argc-unprocessed_args; i < argc; i++)
-        tests.push_back(argv[i]);
+			printf("[INFO] Running on GPU %d\n", gpu);
 
-      for (int r=0; r < repeat; r++) {
-        if (!UnitTestDriver::s_driver().run_tests(tests))
-          exit(-1);
-      }
-    }
-  }
+			// call this once to force everything to initialize so any timing results are not skewed
+			cudaFree(0);
 
-  return 0;
+			if (unprocessed_args == 0) {
+				for (int r = 0; r < repeat; r++) {
+					if (!UnitTestDriver::s_driver().run_single_gpu_tests())
+						exit(-1);
+				}
+			} else {
+				std::vector<std::string> tests;
+				for (int i = argc - unprocessed_args; i < argc; i++)
+					tests.push_back(argv[i]);
+
+				for (int r = 0; r < repeat; r++) {
+					if (!UnitTestDriver::s_driver().run_tests(tests))
+						exit(-1);
+				}
+			}
+		}
+	}
+	return 0;
 }
 

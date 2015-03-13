@@ -25,6 +25,12 @@
 #define OCU_MAX_IMAGES (1)
 #endif
 
+#ifdef OCU_MPI
+#define OCU_MAX_MPI_IMAGES (10)
+#else
+#define OCU_MAX_MPI_IMAGES (1)
+#endif
+
 #ifdef __CUDACC__
 
 #define OCU_HOST __host__

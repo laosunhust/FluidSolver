@@ -70,9 +70,20 @@ class Eqn_Diffusion3DParams : public Eqn_Diffusion3DBaseParams<T>
 {
 public:
   Eqn_Diffusion3DParams() {  }
-
+  /*void use_init_values_to_init()
+  {
+     nx = initial_values.nx(); 
+     ny = initial_values.ny(); 
+     nz = initial_values.nz();
+    
+     gx = initial_values.gx(); 
+     gy = initial_values.gy(); 
+     gz = initial_values.gz(); 
+  }*/
+  
   BoundaryConditionSet bc;
   Grid3DHost<T> initial_values;
+  
 };
 
 
@@ -101,6 +112,11 @@ public:
   double   diffusion_coefficient() const { return _diffusion_solver.coefficient; }
 };
 
+
+class Diffusion3DDvalidate
+{
+
+};
 
 template<typename T>
 class Eqn_Diffusion3DCoParams : public Eqn_Diffusion3DParams<T>

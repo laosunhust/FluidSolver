@@ -144,6 +144,7 @@ void Grid3DHost<T>::clear_zero()
   memset(this->_buffer, 0, this->num_allocated_elements() * sizeof(T));
 }
 
+
 template<typename T>
 void Grid3DHost<T>::clear(T val)
 {

@@ -29,6 +29,7 @@ CoArrayManager::CoArrayManager()
 #ifdef OCU_OMP
   omp_init_lock(&_lock);
 #endif
+
   _valid = false;
   _num_images = 1;
 }
@@ -73,15 +74,17 @@ CoArrayTable *CoArrayManager::_register_coarray(const char *name, int image_id, 
   // release mutex
   // add ptr to slot
   // barrier - implicit when co array is created
+  std::map<std::string, CoArrayTable *>::iterator iter;
 #ifdef OCU_OMP
   omp_set_lock(&_lock);
 #endif
-  std::map<std::string, CoArrayTable *>::iterator iter = _coarrays.find(name);
+  iter = _coarrays.find(name);
   if (iter == _coarrays.end()) {
     iter = _coarrays.insert(std::pair<std::string, CoArrayTable *>(name, new CoArrayTable())).first;
     iter->second->name = name;
   }
   iter->second->table[image_id] = coarray;
+  
 #ifdef OCU_OMP
   omp_unset_lock(&_lock);
 #endif

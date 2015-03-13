@@ -26,6 +26,7 @@
 #include "ocuequation/sol_passiveadvection3d.h"
 #include "ocuequation/parameters.h"
 #include "ocuequation/sol_laplaciancent3d.h"
+#include "ocustorage/coarraympi.h"
 
 namespace ocu {
 
@@ -238,8 +239,70 @@ public:
   const Grid3DDeviceCo<T> &get_w() const { return _w; }
   const Grid3DDeviceCo<T> &get_temperature() const { return _temp; }
 };
+/*
+template<typename T>
+class Eqn_IncompressibleNS3DMPI : public Eqn_IncompressibleNS3DBase<T> {
+protected:
+
+  // **** MEMBER VARIABLES ****
+  
+  Sol_ProjectDivergence3DDeviceCo<T> _projection_solver; //  Pressure solver for MPI version underdevelopment
+  
+  // **** TO DO *****
+  // Presure solver for MPI version
 
 
+  Sol_SelfAdvection3DDevice<T>     _advection_solver; // contains dudt, dvdt, dwdt
+  //Sol_PassiveAdvection3DDevice<T>  _thermal_solver; // contains temperature state
+  //Sol_LaplacianCentered3DDevice<T> _thermal_diffusion; // calculates thermal diffusion
+  Sol_LaplacianCentered3DDevice<T> _u_diffusion; // calculates u part of viscosity
+  Sol_LaplacianCentered3DDevice<T> _v_diffusion; // calculates v part of viscosity
+  Sol_LaplacianCentered3DDevice<T> _w_diffusion; // calculates w part of viscosity
+
+  Grid3DDevice<T>  _u, _v, _w;
+  Grid3DDevice<T>  _deriv_udt, _deriv_vdt, _deriv_wdt;
+
+  //Grid3DDevice<T>  _temp;
+  //Grid3DDevice<T>  _deriv_tempdt;
+
+  // for AB2 stepper
+  //Grid3DDevice<T>  _last_deriv_tempdt;
+  Grid3DDevice<T>  _last_deriv_udt, _last_deriv_vdt, _last_deriv_wdt;
+
+
+  //BoundaryConditionSet _local_thermalbc;
+  BoundaryConditionSet _local_bc;
+
+  //void add_thermal_force(); 
+  CoarrayMPIManager    mpimanager_main; 
+  CoarrayMPIManager    mpimanager_u; 
+  CoarrayMPIManager    mpimanager_v; 
+  CoarrayMPIManager    mpimanager_w; 
+  void do_halo_exchange_uvw_mpi();
+  //void do_halo_exchange_t();
+
+public:
+  
+
+  //  **** MANAGERS ****
+  Eqn_IncompressibleNS3DMPI(CoarrayMPIManager &mpiinfo);
+  ~Eqn_IncompressibleNS3DMPI();
+  
+  // **** PUBLIC INTERFACE ****
+  bool set_parameters(const Eqn_IncompressibleNS3DParams<T> &params);
+
+  double get_max_stable_timestep() const;
+  bool advance_one_step(double dt);
+
+  T viscosity_coefficient()         const { return _u_diffusion.coefficient; }
+  //T thermal_diffusion_coefficient() const { return _thermal_diffusion.coefficient; }
+
+  const Grid3DDevice<T> &get_u() const { return _u; }
+  const Grid3DDevice<T> &get_v() const { return _v; }
+  const Grid3DDevice<T> &get_w() const { return _w; }
+  //const Grid3DDevice<T> &get_temperature() const { return _temp; }
+};
+*/
 typedef Eqn_IncompressibleNS3D<float> Eqn_IncompressibleNS3DF;
 typedef Eqn_IncompressibleNS3D<double> Eqn_IncompressibleNS3DD;
 typedef Eqn_IncompressibleNS3DCo<float> Eqn_IncompressibleNS3DCoF;
@@ -248,6 +311,8 @@ typedef Eqn_IncompressibleNS3DParams<float> Eqn_IncompressibleNS3DParamsF;
 typedef Eqn_IncompressibleNS3DParams<double> Eqn_IncompressibleNS3DParamsD;
 
 
+//typedef Eqn_IncompressibleNS3DMPI<float> Eqn_IncompressibleNS3DMPIF;
+//typedef Eqn_IncompressibleNS3DMPI<double> Eqn_IncompressibleNS3DMPID;
 
 } // end namespace
 

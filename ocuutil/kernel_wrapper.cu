@@ -63,7 +63,7 @@ bool KernelWrapper::PostKernel(const char *kernel_name)
     _cpu_timer.stop();
     char buff[4096];
     sprintf(buff, "%sCPU", kernel_name);
-    global_timer_add_timing(buff, _cpu_timer.elapsed_ms());
+    //global_timer_add_timing(buff, _cpu_timer.elapsed_ms());
   }
 
   cudaError_t er = cudaGetLastError();

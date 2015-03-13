@@ -23,7 +23,8 @@
 #include "ocuutil/thread.h"
 #include "ocustorage/grid1d.h"
 #include "ocustorage/grid3d.h"
-
+#include <cstdio>
+#include <mpi.h>
 
 namespace ocu {
 
@@ -40,7 +41,6 @@ struct CoArrayTable {
     for (int i=0; i < OCU_MAX_IMAGES; i++)
       table[i] = 0;
   }
-
   std::string name;
   void *table[OCU_MAX_IMAGES];
 };
@@ -55,7 +55,7 @@ private:
   std::map<std::string, CoArrayTable *> _coarrays;
   TransferRequestQ  *_transfers[OCU_MAX_IMAGES];
   ExchangeMemoryPool *_mempools[OCU_MAX_IMAGES];
-
+  
 #ifdef OCU_OMP
   omp_lock_t _lock;
 #endif

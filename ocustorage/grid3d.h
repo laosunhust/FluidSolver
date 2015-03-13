@@ -19,11 +19,15 @@
 
 #include <vector>
 
+#include <cstdio>
+#include <iostream>
 #include "ocuutil/defines.h"
 #include "ocuutil/direction.h"
 #include "ocuutil/thread.h"
 #include "ocustorage/region3d.h"
 
+using namespace std;
+ 
 namespace ocu {
 
 class Grid3DUntyped
@@ -141,9 +145,80 @@ public:
   //**** PUBLIC INTERFACE ****
   OCU_HOSTDEVICE T       &at       (int i, int j, int k)         { return *((     (T *)_shifted_buffer) + i * _pnzpny + j * _pnz + k); }
   OCU_HOSTDEVICE const T &at       (int i, int j, int k)  const  { return *(((const T*)_shifted_buffer) + i * _pnzpny + j * _pnz + k); }
-  
+ 
   OCU_HOSTDEVICE const T *buffer() const { return (const T*)_buffer; }
   OCU_HOSTDEVICE       T *buffer()       { return (T *)_buffer; }
+  
+  void printallelements()
+  {
+      int i,j,k;
+      cout<<" num of allocated eles:"<<num_allocated_elements()<<endl;
+      cout<<" pnx = "<<_pnx<<"pny = "<<_pny<<" pnz ="<< _pnz<<endl;
+      for(i=-_gx;i<_nx+_gx;i++)
+      {
+          for(j=-_gy;j<_ny+_gy;j++)
+          {
+             for(k=-_gz;k<_nz+_gz;k++)
+             {
+                 std::cout<<this->at(i,j,k)<<",";
+             }
+             std::cout<<std::endl;
+          }
+          std::cout<<"\n\n"<<std::endl;
+      }    
+  }
+  T get_center_avg()
+  {
+      vector<T> candidates;
+      int xbegin, xend, ybegin, yend, zbegin, zend;
+      int i,j,k;
+      if(_nx %2==0)
+      {
+         xbegin = _nx/2 - 1;
+         xend   = _nx/2;
+      }
+      else
+      {
+         xbegin = _nx/2;  
+         xend   = _nx/2;
+      } 
+      if(_ny %2==0)
+      {
+         ybegin = _ny/2 - 1;
+         yend   = _ny/2;
+      }
+      else
+      {
+         ybegin = _ny/2;  
+         yend   = _ny/2;
+      }
+      if(_nz %2==0)
+      {
+         zbegin = _nz/2 - 1;
+         zend   = _nz/2;
+      }
+      else
+      {
+         zbegin = _nz/2;  
+         zend   = _nz/2;
+      }
+      for(i=xbegin;i<=xend;i++)
+      {
+        for(j=ybegin;j<=yend;j++)
+        {
+           for(k=zbegin;k<=zend;k++)
+           {
+              candidates.push_back(this->at(i,j,k));
+           }
+        }
+      }
+      T sum = 0;
+      for(i=0;i<candidates.size();i++)
+      {
+         sum = sum + candidates[i];
+      }
+      return (sum/candidates.size());
+  }
 };
 
 
@@ -174,6 +249,9 @@ public:
 
   //! Allocate memory so that the memory layout of this will be congruent with the memory layout of "other"
   bool init_congruent(const Grid3DUntyped &other, bool pinned=true) {
+    //printf("other.paddingx() = %d \n", other.paddingx());
+    //printf("other.paddingy() = %d \n", other.paddingy());
+    //printf("other.paddingz() = %d \n", other.paddingz());
     return init(other.nx(), other.ny(), other.nz(), other.gx(), other.gy(), other.gz(), pinned, other.paddingx(), other.paddingy(), other.paddingz());
   }
 

@@ -20,34 +20,16 @@
 #include "ocustorage/grid3dboundary.h"
 #include "ocuutil/kernel_wrapper.h"
 #include "ocustorage/coarray.h"
-#include "ocuequation/eqn_incompressns3d.h"
+//#include "ocuequation/eqn_advectiondiffusion3d.h"
+#include "eqn_advectiondiffusion3d.h"
 
-template<typename T>
-__global__ void Eqn_IncompressibleNS3D_add_thermal_force(T *dvdt, T coefficient, const T *temperature,
-  int xstride, int ystride, int nbr_stride, 
-  int nx, int ny, int nz, int blocksInY, float invBlocksInY)
-{
-  int blockIdxz = truncf(blockIdx.y * invBlocksInY);
-  int blockIdxy = blockIdx.y - __mul24(blockIdxz,blocksInY);
 
-  // transpose for coalescing since k is the fastest changing index 
-  int k     = __mul24(blockIdx.x,blockDim.x) + threadIdx.x;
-  int j     = __mul24(blockIdxy ,blockDim.y) + threadIdx.y;
-  int i     = __mul24(blockIdxz ,blockDim.z) + threadIdx.z;
-
-  // shift so we will get maximum coalescing.  This means that we will need to test if k>0 below.
-  int idx = __mul24(i, xstride) + __mul24(j,ystride) + k;
-
-  if (i < nx && j < ny && k < nz) {
-    dvdt[idx] += ((T).5) * coefficient * (temperature[idx] + temperature[idx-nbr_stride]);
-  }
-}
 
 namespace ocu {
 
 
 template<typename T>
-Eqn_IncompressibleNS3DBase<T>::Eqn_IncompressibleNS3DBase()
+Eqn_AdvectionDiffusion3DBase<T>::Eqn_AdvectionDiffusion3DBase()
 {
   num_steps = 0;
   _nx = 0;
@@ -67,26 +49,30 @@ Eqn_IncompressibleNS3DBase<T>::Eqn_IncompressibleNS3DBase()
 
 template<typename T>
 bool 
-Eqn_IncompressibleNS3DBase<T>::set_base_parameters(const Eqn_IncompressibleNS3DParams<T> &params)
+Eqn_AdvectionDiffusion3DBase<T>::set_base_parameters(const Eqn_AdvectionDiffusion3DParams<T> &params)
 {
+
+  
+  //SPstatus = cusparseDgtsv(SPhandel,3,1,
+
   _max_divergence = params.max_divergence;
   _cfl_factor = params.cfl_factor;
   _bouyancy = params.bouyancy;
   _gravity = params.gravity;
 
   if (!check_float(_max_divergence) || _max_divergence < 0 || _max_divergence > 1) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - invalid max_divergence %f\n", _max_divergence);
+    printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - invalid max_divergence %f\n", _max_divergence);
     return false;
   }
  
   if (_cfl_factor < 0) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - invalid cfl_factor %f\n", _cfl_factor);
+    printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - invalid cfl_factor %f\n", _cfl_factor);
     return false;
   }
 
   _time_step = params.time_step;
   if (_time_step != TS_ADAMS_BASHFORD2 && _time_step != TS_FORWARD_EULER) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - unknown timestep type %d\n", _time_step);
+    printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - unknown timestep type %d\n", _time_step);
     return false;
   }
 
@@ -101,183 +87,145 @@ Eqn_IncompressibleNS3DBase<T>::set_base_parameters(const Eqn_IncompressibleNS3DP
   if (params.vertical_direction != DIR_XPOS && params.vertical_direction != DIR_XNEG &&
       params.vertical_direction != DIR_YPOS && params.vertical_direction != DIR_YNEG &&
       params.vertical_direction != DIR_ZPOS && params.vertical_direction != DIR_ZNEG) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - bad vertical_direction %d\n", params.vertical_direction);
+    printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - bad vertical_direction %d\n", params.vertical_direction);
     return false;
   }
 
   _vertical_direction = params.vertical_direction;
 
   if (!check_float(_hx) || !check_float(_hy) || !check_float(_hz) || _hx <= 0 || _hy <= 0 || _hz <= 0) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - bad hx, hy, hz (%f, %f, %f)\n", _hx, _hy, _hz);
+    printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - bad hx, hy, hz (%f, %f, %f)\n", _hx, _hy, _hz);
     return false;
   }
-  _thermalbc = params.temp_bc;
+  //_thermalbc = params.temp_bc;
 
   return true;
 }
 
-template<typename T>
-void 
-Eqn_IncompressibleNS3D<T>::add_thermal_force()
-{
-  // apply thermal force by adding -gkT to dvdt (let g = -1, k = 1, so this is just dvdt += T)
-  //_advection_solver.deriv_vdt.linear_combination((T)1.0, _advection_solver.deriv_vdt, (T)1.0, _thermal_solver.phi);
-
-  int tnx = this->nz();
-  int tny = this->ny();
-  int tnz = this->nx();
-
-  int threadsInX = 16;
-  int threadsInY = 2;
-  int threadsInZ = 2;
-
-  int blocksInX = (tnx+threadsInX-1)/threadsInX;
-  int blocksInY = (tny+threadsInY-1)/threadsInY;
-  int blocksInZ = (tnz+threadsInZ-1)/threadsInZ;
-
-  dim3 Dg = dim3(blocksInX, blocksInY*blocksInZ);
-  dim3 Db = dim3(threadsInX, threadsInY, threadsInZ);
-
-  T direction_mult = this->_vertical_direction & DIR_NEGATIVE_FLAG ? 1 : -1;
-  T *uvw = (this->_vertical_direction & DIR_XAXIS_FLAG) ? &_deriv_udt.at(0,0,0) :
-           (this->_vertical_direction & DIR_YAXIS_FLAG) ? &_deriv_vdt.at(0,0,0) : &_deriv_wdt.at(0,0,0);
-
-  KernelWrapper wrapper;
-  wrapper.PreKernel();
-
-  Eqn_IncompressibleNS3D_add_thermal_force<<<Dg, Db, 0, ThreadManager::get_compute_stream()>>>(uvw, direction_mult * this->_gravity * this->_bouyancy, &_temp.at(0,0,0),
-    _temp.xstride(), _temp.ystride(), _temp.stride(this->_vertical_direction), this->nx(), this->ny(), this->nz(), 
-    blocksInY, 1.0f / (float)blocksInY);
-
-  if (!wrapper.PostKernel("Eqn_IncompressibleNS3D_add_thermal_force"))
-    this->add_error();
-
-}
-
 
 
 template<typename T>
-Eqn_IncompressibleNS3D<T>::Eqn_IncompressibleNS3D()
+Eqn_AdvectionDiffusion3D<T>::Eqn_AdvectionDiffusion3D()
 {
 }
 
 template<typename T>
 bool 
-Eqn_IncompressibleNS3D<T>::set_parameters(const Eqn_IncompressibleNS3DParams<T> &params)
+Eqn_AdvectionDiffusion3D<T>::set_parameters(const Eqn_AdvectionDiffusion3DParams<T> &params)
 {
   if (!set_base_parameters(params)) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - failed on base parameters\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - failed on base parameters\n");
     return false;
   }
 
   if (!_u.init_congruent(params.init_u) || !_deriv_udt.init_congruent(params.init_u) || !_last_deriv_udt.init_congruent(params.init_u)) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - failed on initializing u\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - failed on initializing u\n");
     return false;
   }
 
   if (!_u.copy_all_data(params.init_u)) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - failed copying to u\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - failed copying to u\n");
     return false;  
   }
 
   if (!_v.init_congruent(params.init_v) || !_deriv_vdt.init_congruent(params.init_v) || !_last_deriv_vdt.init_congruent(params.init_v)) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - failed on initializing v\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - failed on initializing v\n");
     return false;
   }
 
   if (!_v.copy_all_data(params.init_v)) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - failed copying to v\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - failed copying to v\n");
     return false;  
   }
 
   if (!_w.init_congruent(params.init_w) || !_deriv_wdt.init_congruent(params.init_w) || !_last_deriv_wdt.init_congruent(params.init_w)) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - failed on initializing w\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - failed on initializing w\n");
     return false;
   }
 
   if (!_w.copy_all_data(params.init_w)) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - failed copying to w\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - failed copying to w\n");
     return false;  
   }
 
-  if (!_temp.init_congruent(params.init_temp) || !_deriv_tempdt.init_congruent(params.init_temp) || !_last_deriv_tempdt.init_congruent(params.init_temp)) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - failed on initializing temp\n");
-    return false;
-  }
+  //if (!_temp.init_congruent(params.init_temp) || !_deriv_tempdt.init_congruent(params.init_temp) || !_last_deriv_tempdt.init_congruent(params.init_temp)) {
+  //  printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - failed on initializing temp\n");
+  //  return false;
+  //}
   
-  if (!_temp.copy_all_data(params.init_temp)) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - failed on copying temperature field\n");
-    return false;  
-  }
+  //if (!_temp.copy_all_data(params.init_temp)) {
+  //  printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - failed on copying temperature field\n");
+  //  return false;  
+  //}
 
-  _projection_solver.bc = params.flow_bc;
+  //_projection_solver.bc = params.flow_bc;
   _advection_solver.interp_type = params.advection_scheme;
-  _thermal_solver.interp_type = params.advection_scheme;
+  //_thermal_solver.interp_type = params.advection_scheme;
 
-  if (!_thermal_solver.initialize_storage(this->_nx, this->_ny, this->_nz, this->_hx, this->_hy, this->_hz, &_u, &_v, &_w, &_temp, &_deriv_tempdt)) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - failed on _thermal_solver initialization\n");
-    return false;  
-  }
+  //if (!_thermal_solver.initialize_storage(this->_nx, this->_ny, this->_nz, this->_hx, this->_hy, this->_hz, &_u, &_v, &_w, &_temp, &_deriv_tempdt)) {
+  //  printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - failed on _thermal_solver initialization\n");
+  //  return false;  
+  // }
 
   if (!_advection_solver.initialize_storage(this->_nx, this->_ny, this->_nz, this->_hx, this->_hy, this->_hz, &_u, &_v, &_w, &_deriv_udt, &_deriv_vdt, &_deriv_wdt)) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - failed on _advection_solver initialization\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - failed on _advection_solver initialization\n");
     return false;  
   }
 
-  if (!_projection_solver.initialize_storage(this->_nx, this->_ny, this->_nz, this->_hx, this->_hy, this->_hz, &_u, &_v, &_w)) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - failed on _projection_solver initialization\n");
-    return false;  
-  }
+  //if (!_projection_solver.initialize_storage(this->_nx, this->_ny, this->_nz, this->_hx, this->_hy, this->_hz, &_u, &_v, &_w)) {
+  //  printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - failed on _projection_solver initialization\n");
+  //  return false;  
+  //}
 
-  if (!_thermal_diffusion.initialize_storage(this->_nx, this->_ny, this->_nz, this->_hx, this->_hy, this->_hz, &_temp, &_deriv_tempdt)) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - failed on _thermal_diffusion initialization\n");
-    return false;
-  }
+  //if (!_thermal_diffusion.initialize_storage(this->_nx, this->_ny, this->_nz, this->_hx, this->_hy, this->_hz, &_temp, &_deriv_tempdt)) {
+  //  printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - failed on _thermal_diffusion initialization\n");
+  //  return false;
+ // }
 
-  if (!check_float(params.thermal_diffusion) || params.thermal_diffusion < 0) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - invalid thermal diffusion %f\n", params.thermal_diffusion);
-    return false;
-  }
+  //if (!check_float(params.thermal_diffusion) || params.thermal_diffusion < 0) {
+  //  printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - invalid thermal diffusion %f\n", params.thermal_diffusion);
+  //  return false;
+  //}
 
-  _thermal_diffusion.coefficient = params.thermal_diffusion;
+  //_thermal_diffusion.coefficient = params.thermal_diffusion;
 
   if (!_u_diffusion.initialize_storage(this->_nx+1, this->_ny, this->_nz, this->_hx, this->_hy, this->_hz, &_u, &_deriv_udt)) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - failed on _u_diffusion initialization\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - failed on _u_diffusion initialization\n");
     return false;
   }
 
   if (!check_float(params.viscosity) || params.viscosity < 0) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - invalid viscosity %f\n", params.viscosity);
+    printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - invalid viscosity %f\n", params.viscosity);
     return false;
   }
   _u_diffusion.coefficient = params.viscosity;
 
   if (!_v_diffusion.initialize_storage(this->_nx, this->_ny+1, this->_nz, this->_hx, this->_hy, this->_hz, &_v, &_deriv_vdt)) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - failed on _v_diffusion initialization\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - failed on _v_diffusion initialization\n");
     return false;
   }
   _v_diffusion.coefficient = params.viscosity;
 
   if (!_w_diffusion.initialize_storage(this->_nx, this->_ny, this->_nz+1, this->_hx, this->_hy, this->_hz, &_w, &_deriv_wdt)) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - failed on _w_diffusion initialization\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - failed on _w_diffusion initialization\n");
     return false;
   }
   _w_diffusion.coefficient = params.viscosity;
 
   if (!apply_3d_mac_boundary_conditions_level1(_u, _v, _w, params.flow_bc, this->_hx, this->_hy, this->_hz)) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - failed on enforcing flow boundary conditions\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - failed on enforcing flow boundary conditions\n");
     return false;  
   }
 
-  if (!apply_3d_boundary_conditions_level1(_temp, this->_thermalbc, this->_hx, this->_hy, this->_hz)) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - failed on enforcing thermal boundary conditions\n");
-    return false;  
-  }
+  //if (!apply_3d_boundary_conditions_level1(_temp, this->_thermalbc, this->_hx, this->_hy, this->_hz)) {
+  //  printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - failed on enforcing thermal boundary conditions\n");
+  //  return false;  
+  //}
 
   _deriv_udt.clear_zero();
   _deriv_vdt.clear_zero();
   _deriv_wdt.clear_zero();
-  _deriv_tempdt.clear_zero();
+  //_deriv_tempdt.clear_zero();
 
   // all grid layouts should match
   if (!_u.check_layout_match(_v) || 
@@ -285,13 +233,13 @@ Eqn_IncompressibleNS3D<T>::set_parameters(const Eqn_IncompressibleNS3DParams<T> 
       !_u.check_layout_match(_deriv_udt) || 
       !_u.check_layout_match(_deriv_vdt) || 
       !_u.check_layout_match(_deriv_wdt) ||
-      !_u.check_layout_match(_temp) ||
-      !_u.check_layout_match(_deriv_tempdt) ||
-      !_u.check_layout_match(_last_deriv_tempdt) ||
+      //!_u.check_layout_match(_temp) ||
+      //!_u.check_layout_match(_deriv_tempdt) ||
+      //!_u.check_layout_match(_last_deriv_tempdt) ||
       !_u.check_layout_match(_last_deriv_udt) ||
       !_u.check_layout_match(_last_deriv_vdt) ||
       !_u.check_layout_match(_last_deriv_wdt)) {
-    printf("[ERROR] Eqn_IncompressibleNS3D::set_parameters - grid layouts do not all match\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3D::set_parameters - grid layouts do not all match\n");
     return false;  
   }
 
@@ -299,7 +247,7 @@ Eqn_IncompressibleNS3D<T>::set_parameters(const Eqn_IncompressibleNS3DParams<T> 
 }
 
 template<typename T>
-double Eqn_IncompressibleNS3D<T>::get_max_stable_timestep() const
+double Eqn_AdvectionDiffusion3D<T>::get_max_stable_timestep() const
 {
   T max_u, max_v, max_w;
   _u.reduce_maxabs(max_u);
@@ -317,19 +265,131 @@ double Eqn_IncompressibleNS3D<T>::get_max_stable_timestep() const
 
   double minh = min3(this->hx(), this->hy(), this->hz());
 
-  if (thermal_diffusion_coefficient() > 0)
-    step = std::min(step, (minh * minh) / (6 * thermal_diffusion_coefficient()));
+  //if (thermal_diffusion_coefficient() > 0)
+  //  step = std::min(step, (minh * minh) / (6 * thermal_diffusion_coefficient()));
   if (viscosity_coefficient() > 0)
     step = std::min(step, (minh * minh) / (6 * viscosity_coefficient()));
 
-  printf("Eqn_IncompressibleNS3D<T>::get_max_stable_timestep - return %f\n", step);
+  printf("Eqn_AdvectionDiffusion3D<T>::get_max_stable_timestep - return %f\n", step);
 
   return step;
 }
 
+template<typename T>
+bool Eqn_AdvectionDiffusion3D<T>::test_tri_solver()
+{
+    // handlers for different library
+    cusparseStatus_t SPstatus;
+    cusparseHandle_t SPhandle;
+    cusparseMatDescr_t descra;
+    //cudaError_t      cudastat1,cudastat2,cudastat3; 
+    cudaError_t      cudastat1; 
+    // __initialize handlers__
+    SPstatus = cusparseCreate(&SPhandle);
+    if(SPstatus != CUSPARSE_STATUS_SUCCESS)
+    {
+       printf("CUSPARSE_Lib_Init failed");
+       fflush(stdout);
+       return EXIT_FAILURE;
+    }  
+    SPstatus = cusparseCreateMatDescr(&descra);
+    if(SPstatus != CUSPARSE_STATUS_SUCCESS)
+    {
+        printf("CUSPARSE_Matrix_description_Init failed");
+        fflush(stdout);
+        return EXIT_FAILURE;
+    }
+    
+    double *D_low_tri, *D_mid_tri, *D_upp_tri, *D_res; 
+    
+   
+    double *low_tri = new double[3];
+    double *mid_tri = new double[3];
+    double *upp_tri = new double[3];
+    low_tri[0] = 0; low_tri[1] = 1; low_tri[2] = 1;
+    mid_tri[0] = 1; mid_tri[1] = 2; mid_tri[2] = 2;
+    upp_tri[0] = 1; upp_tri[1] = 1; upp_tri[2] = 0; 
+    double *res     = new double[3];
+    res[0] = 2; res[1] =4;  res[2] = 3;
+   
+    cudastat1 = cudaMalloc((void**)&D_low_tri,3*sizeof(double));
+    if(cudastat1!=cudaSuccess) { printf(" allocation failed\n");}  
+    cudastat1 = cudaMalloc((void**)&D_mid_tri,3*sizeof(double));
+    if(cudastat1!=cudaSuccess) { printf(" allocation failed\n");}  
+    cudastat1 = cudaMalloc((void**)&D_upp_tri,3*sizeof(double));
+    if(cudastat1!=cudaSuccess) { printf(" allocation failed\n");}  
+    cudastat1 = cudaMalloc((void**)&D_res,3*sizeof(double));
+    if(cudastat1!=cudaSuccess) { printf(" allocation failed\n");}  
+    
+    cudastat1 = cudaMemcpy(D_low_tri,low_tri,3*sizeof(double),cudaMemcpyHostToDevice);
+    if(cudastat1!=cudaSuccess) { printf(" mem copy failed\n");}  
+    cudastat1 = cudaMemcpy(D_mid_tri,mid_tri,3*sizeof(double),cudaMemcpyHostToDevice);
+    if(cudastat1!=cudaSuccess) { printf(" mem copy failed\n");}  
+    cudastat1 = cudaMemcpy(D_upp_tri,upp_tri,3*sizeof(double),cudaMemcpyHostToDevice);
+    if(cudastat1!=cudaSuccess) { printf(" mem copy failed\n");}  
+    cudastat1 = cudaMemcpy(D_res,res,3*sizeof(double),cudaMemcpyHostToDevice);
+    if(cudastat1!=cudaSuccess) { printf(" mem copy failed\n");}  
+     
+    SPstatus = cusparseDgtsv(SPhandle,3,1,D_low_tri,D_mid_tri, D_upp_tri,D_res,3);
+    if(SPstatus!=CUSPARSE_STATUS_SUCCESS)
+    { 
+       printf(" cusparseDgtsv failed !");
+       fflush(stdout);
+       if(SPstatus == CUSPARSE_STATUS_NOT_INITIALIZED)
+       {
+          printf(" not init\n");
+       }
+       if(SPstatus == CUSPARSE_STATUS_ALLOC_FAILED)
+       {
+          printf(" alloc failed\n");
+       }
+       if(SPstatus == CUSPARSE_STATUS_INVALID_VALUE)
+       {
+          printf(" invalid value\n");
+       }
+       if(SPstatus == CUSPARSE_STATUS_ARCH_MISMATCH)
+       {
+          printf(" arch mismatch\n");
+       }
+       if(SPstatus == CUSPARSE_STATUS_EXECUTION_FAILED)
+       {
+          printf(" execution failed\n");
+       }
+       if(SPstatus == CUSPARSE_STATUS_INTERNAL_ERROR)
+       {
+          printf(" internal error\n");
+       }
+       if(SPstatus == CUSPARSE_STATUS_MATRIX_TYPE_NOT_SUPPORTED)
+       {
+          printf(" matrix not supported\n");
+       }
+       throw SPstatus;
+    }
+  
+    //low_tri[0] = 0; low_tri[1] = 0; low_tri[2] = 0;
+    //res[0] = 0; res[1] = 0; res[2] = 0;
+    //cudastat1 = cudaMemcpy(low_tri,D_low_tri,3*sizeof(double),cudaMemcpyDeviceToHost);
+    //if(cudastat1!=cudaSuccess) { printf(" mem copy failed\n");}  
+    //cudastat1 = cudaMemcpy(mid_tri,D_mid_tri,3*sizeof(double),cudaMemcpyDeviceToHost);
+    //if(cudastat1!=cudaSuccess) { printf(" mem copy failed\n");}  
+    //cudastat1 = cudaMemcpy(upp_tri,D_upp_tri,3*sizeof(double),cudaMemcpyDeviceToHost);
+    //if(cudastat1!=cudaSuccess) { printf(" mem copy failed\n");}  
+    cudastat1 = cudaMemcpy(res,D_res,3*sizeof(double),cudaMemcpyDeviceToHost);
+    if(cudastat1!=cudaSuccess) { printf(" mem copy failed\n");}  
+    
+    //printf(" low_tri is : %f %f %f\n", low_tri[0],low_tri[1],low_tri[2]);
+    printf(" result is : %f %f %f\n", res[0],res[1],res[2]);
+
+    delete[]  low_tri;
+    delete[]  mid_tri;
+    delete[]  upp_tri;
+
+    delete[]  res;
+    return 1;
+}
 
 template<typename T>
-bool Eqn_IncompressibleNS3D<T>::advance_one_step(double dt)
+bool Eqn_AdvectionDiffusion3D<T>::advance_one_step(double dt)
 {
   this->clear_error();
   this->num_steps++;
@@ -344,26 +404,26 @@ bool Eqn_IncompressibleNS3D<T>::advance_one_step(double dt)
   }
 
   // eventually this will be replaced with a grid-wide operation.
-  add_thermal_force();
+  //add_thermal_force();
 
   // update dTdt
-  check_ok(_thermal_solver.solve());   // updates dTdt, overwrites whatever is there
-  if (thermal_diffusion_coefficient() > 0) {
-    check_ok(_thermal_diffusion.solve()); // dTdt += k \nabla^2 T
-  }
+  //check_ok(_thermal_solver.solve());   // updates dTdt, overwrites whatever is there
+  //if (thermal_diffusion_coefficient() > 0) {
+  //  check_ok(_thermal_diffusion.solve()); // dTdt += k \nabla^2 T
+  //}
 
   T ab_coeff = -dt*dt / (2 * this->_lastdt);
 
   // advance T 
-  if (this->_time_step == TS_ADAMS_BASHFORD2 && this->_lastdt > 0) {
-    check_ok(_temp.linear_combination((T)1.0, _temp, (T)(dt - ab_coeff), _deriv_tempdt));
-    check_ok(_temp.linear_combination((T)1.0, _temp, (T)ab_coeff, _last_deriv_tempdt));
-  } 
-  else {
-    check_ok(_temp.linear_combination((T)1.0, _temp, (T)dt, _deriv_tempdt));
-  }
+  //if (this->_time_step == TS_ADAMS_BASHFORD2 && this->_lastdt > 0) {
+  //  check_ok(_temp.linear_combination((T)1.0, _temp, (T)(dt - ab_coeff), _deriv_tempdt));
+  //  check_ok(_temp.linear_combination((T)1.0, _temp, (T)ab_coeff, _last_deriv_tempdt));
+  //} 
+  //else {
+  //  check_ok(_temp.linear_combination((T)1.0, _temp, (T)dt, _deriv_tempdt));
+  //}
 
-  check_ok(apply_3d_boundary_conditions_level1_nocorners(_temp, this->_thermalbc, this->_hx, this->_hy, this->_hz));
+  //check_ok(apply_3d_boundary_conditions_level1_nocorners(_temp, this->_thermalbc, this->_hx, this->_hy, this->_hz));
 
   // advance u,v,w
   if (this->_time_step == TS_ADAMS_BASHFORD2 && this->_lastdt > 0) {
@@ -386,14 +446,14 @@ bool Eqn_IncompressibleNS3D<T>::advance_one_step(double dt)
   // copy state for AB2
   if (this->_time_step == TS_ADAMS_BASHFORD2) {
     this->_lastdt = dt;
-    _last_deriv_tempdt.copy_all_data(_deriv_tempdt);
+    //_last_deriv_tempdt.copy_all_data(_deriv_tempdt);
     _last_deriv_udt.copy_all_data(_deriv_udt);
     _last_deriv_vdt.copy_all_data(_deriv_vdt);
     _last_deriv_wdt.copy_all_data(_deriv_wdt);
   }
 
   // enforce incompressibility - this enforces bc's before and after projection
-  check_ok(_projection_solver.solve(this->_max_divergence));
+  //check_ok(_projection_solver.solve(this->_max_divergence));
 
   return !this->any_error();
 }
@@ -403,45 +463,45 @@ bool Eqn_IncompressibleNS3D<T>::advance_one_step(double dt)
 
 
 template<typename T>
-Eqn_IncompressibleNS3DCo<T>::Eqn_IncompressibleNS3DCo(const char *name):
-  _projection_solver((std::string(name) + std::string("._projection_solver")).c_str()),
+Eqn_AdvectionDiffusion3DCo<T>::Eqn_AdvectionDiffusion3DCo(const char *name):
+   //_projection_solver((std::string(name) + std::string("._projection_solver")).c_str()),
   _u((std::string(name) + std::string("._u")).c_str()),
   _v((std::string(name) + std::string("._v")).c_str()),
   _w((std::string(name) + std::string("._w")).c_str()),
-  _temp((std::string(name) + std::string("._temp")).c_str()),
+  //_temp((std::string(name) + std::string("._temp")).c_str()),
   _deriv_udt((std::string(name) + std::string("._deriv_udt")).c_str()),
   _deriv_vdt((std::string(name) + std::string("._deriv_vdt")).c_str()),
-  _deriv_wdt((std::string(name) + std::string("._deriv_wdt")).c_str()),
-  _deriv_tempdt((std::string(name) + std::string("._deriv_tempdt")).c_str())
+  _deriv_wdt((std::string(name) + std::string("._deriv_wdt")).c_str())
+  //_deriv_tempdt((std::string(name) + std::string("._deriv_tempdt")).c_str())
 {
   _u_negx_hdl = -1;
   _v_negx_hdl = -1;
   _w_negx_hdl = -1;
-  _t_negx_hdl = -1;
+  //_t_negx_hdl = -1;
 
   _u_posx_hdl = -1;
   _v_posx_hdl = -1;
   _w_posx_hdl = -1;
-  _t_posx_hdl = -1;
+  //_t_posx_hdl = -1;
 }
 
 template<typename T>
-Eqn_IncompressibleNS3DCo<T>::~Eqn_IncompressibleNS3DCo()
+Eqn_AdvectionDiffusion3DCo<T>::~Eqn_AdvectionDiffusion3DCo()
 {
   CoArrayManager::barrier_deallocate(_u_negx_hdl);
   CoArrayManager::barrier_deallocate(_v_negx_hdl);
   CoArrayManager::barrier_deallocate(_w_negx_hdl);
-  CoArrayManager::barrier_deallocate(_t_negx_hdl);
+  //CoArrayManager::barrier_deallocate(_t_negx_hdl);
 
   CoArrayManager::barrier_deallocate(_u_posx_hdl);
   CoArrayManager::barrier_deallocate(_v_posx_hdl);
   CoArrayManager::barrier_deallocate(_w_posx_hdl);
-  CoArrayManager::barrier_deallocate(_t_posx_hdl);
+  //CoArrayManager::barrier_deallocate(_t_posx_hdl);
 }
 
 template<typename T>
 void
-Eqn_IncompressibleNS3DCo<T>::do_halo_exchange_uvw()
+Eqn_AdvectionDiffusion3DCo<T>::do_halo_exchange_uvw()
 {
   CoArrayManager::barrier_exchange(_u_negx_hdl);
   CoArrayManager::barrier_exchange(_v_negx_hdl);
@@ -451,117 +511,117 @@ Eqn_IncompressibleNS3DCo<T>::do_halo_exchange_uvw()
   CoArrayManager::barrier_exchange(_w_posx_hdl);
 }
 
-template<typename T>
+/*template<typename T>
 void
-Eqn_IncompressibleNS3DCo<T>::do_halo_exchange_t()
+Eqn_AdvectionDiffusion3DCo<T>::do_halo_exchange_t()
 {
   CoArrayManager::barrier_exchange(_t_negx_hdl);
   CoArrayManager::barrier_exchange(_t_posx_hdl);
-}
+}*/
 
 
 template<typename T>
 bool 
-Eqn_IncompressibleNS3DCo<T>::set_parameters(const Eqn_IncompressibleNS3DParams<T> &params)
+Eqn_AdvectionDiffusion3DCo<T>::set_parameters(const Eqn_AdvectionDiffusion3DParams<T> &params)
 {
   int tid = ThreadManager::this_image();
   int num_images = ThreadManager::num_images();
 
   if (!set_base_parameters(params)) {
-    printf("[ERROR] Eqn_IncompressibleNS3DCo::set_parameters - failed on base parameters\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3DCo::set_parameters - failed on base parameters\n");
     return false;
   }
 
   if (!_u.init_congruent(params.init_u) || !_deriv_udt.init_congruent(params.init_u) || !_last_deriv_udt.init_congruent(params.init_u)) {
-    printf("[ERROR] Eqn_IncompressibleNS3DCo::set_parameters - failed on initializing u\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3DCo::set_parameters - failed on initializing u\n");
     return false;
   }
 
   if (!_u.copy_all_data(params.init_u)) {
-    printf("[ERROR] Eqn_IncompressibleNS3DCo::set_parameters - failed copying to u\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3DCo::set_parameters - failed copying to u\n");
     return false;  
   }
 
   if (!_v.init_congruent(params.init_v) || !_deriv_vdt.init_congruent(params.init_v) || !_last_deriv_vdt.init_congruent(params.init_v)) {
-    printf("[ERROR] Eqn_IncompressibleNS3DCo::set_parameters - failed on initializing v\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3DCo::set_parameters - failed on initializing v\n");
     return false;
   }
 
   if (!_v.copy_all_data(params.init_v)) {
-    printf("[ERROR] Eqn_IncompressibleNS3DCo::set_parameters - failed copying to v\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3DCo::set_parameters - failed copying to v\n");
     return false;  
   }
 
   if (!_w.init_congruent(params.init_w) || !_deriv_wdt.init_congruent(params.init_w) || !_last_deriv_wdt.init_congruent(params.init_w)) {
-    printf("[ERROR] Eqn_IncompressibleNS3DCo::set_parameters - failed on initializing w\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3DCo::set_parameters - failed on initializing w\n");
     return false;
   }
 
   if (!_w.copy_all_data(params.init_w)) {
-    printf("[ERROR] Eqn_IncompressibleNS3DCo::set_parameters - failed copying to w\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3DCo::set_parameters - failed copying to w\n");
     return false;  
   }
 
-  if (!_temp.init_congruent(params.init_temp) || !_deriv_tempdt.init_congruent(params.init_temp) || !_last_deriv_tempdt.init_congruent(params.init_temp)) {
-    printf("[ERROR] Eqn_IncompressibleNS3DCo::set_parameters - failed on initializing temp\n");
+  /*if (!_temp.init_congruent(params.init_temp) || !_deriv_tempdt.init_congruent(params.init_temp) || !_last_deriv_tempdt.init_congruent(params.init_temp)) {
+    printf("[ERROR] Eqn_AdvectionDiffusion3DCo::set_parameters - failed on initializing temp\n");
     return false;
   }
   
   if (!_temp.copy_all_data(params.init_temp)) {
-    printf("[ERROR] Eqn_IncompressibleNS3DCo::set_parameters - failed on copying temperature field\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3DCo::set_parameters - failed on copying temperature field\n");
     return false;  
   }
-
-  _projection_solver.bc = params.flow_bc;
+  */
+  //_projection_solver.bc = params.flow_bc;
   _advection_solver.interp_type = params.advection_scheme;
-  _thermal_solver.interp_type = params.advection_scheme;
+  //_thermal_solver.interp_type = params.advection_scheme;
 
-  if (!_thermal_solver.initialize_storage(this->_nx, this->_ny, this->_nz, this->_hx, this->_hy, this->_hz, &_u, &_v, &_w, &_temp, &_deriv_tempdt)) {
-    printf("[ERROR] Eqn_IncompressibleNS3DCo::set_parameters - failed on _thermal_solver initialization\n");
+  /*if (!_thermal_solver.initialize_storage(this->_nx, this->_ny, this->_nz, this->_hx, this->_hy, this->_hz, &_u, &_v, &_w, &_temp, &_deriv_tempdt)) {
+    printf("[ERROR] Eqn_AdvectionDiffusion3DCo::set_parameters - failed on _thermal_solver initialization\n");
     return false;  
-  }
+  }*/
 
   if (!_advection_solver.initialize_storage(this->_nx, this->_ny, this->_nz, this->_hx, this->_hy, this->_hz, &_u, &_v, &_w, &_deriv_udt, &_deriv_vdt, &_deriv_wdt)) {
-    printf("[ERROR] Eqn_IncompressibleNS3DCo::set_parameters - failed on _advection_solver initialization\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3DCo::set_parameters - failed on _advection_solver initialization\n");
     return false;  
   }
 
-  if (!_projection_solver.initialize_storage(this->_nx, this->_ny, this->_nz, this->_hx, this->_hy, this->_hz, &_u, &_v, &_w)) {
-    printf("[ERROR] Eqn_IncompressibleNS3DCo::set_parameters - failed on _projection_solver initialization\n");
+  /*if (!_projection_solver.initialize_storage(this->_nx, this->_ny, this->_nz, this->_hx, this->_hy, this->_hz, &_u, &_v, &_w)) {
+    printf("[ERROR] Eqn_AdvectionDiffusion3DCo::set_parameters - failed on _projection_solver initialization\n");
     return false;  
-  }
+  }*/
 
-  if (!_thermal_diffusion.initialize_storage(this->_nx, this->_ny, this->_nz, this->_hx, this->_hy, this->_hz, &_temp, &_deriv_tempdt)) {
-    printf("[ERROR] Eqn_IncompressibleNS3DCo::set_parameters - failed on _thermal_diffusion initialization\n");
+  /*if (!_thermal_diffusion.initialize_storage(this->_nx, this->_ny, this->_nz, this->_hx, this->_hy, this->_hz, &_temp, &_deriv_tempdt)) {
+    printf("[ERROR] Eqn_AdvectionDiffusion3DCo::set_parameters - failed on _thermal_diffusion initialization\n");
     return false;
-  }
+  }*/
 
-  if (!check_float(params.thermal_diffusion) || params.thermal_diffusion < 0) {
-    printf("[ERROR] Eqn_IncompressibleNS3DCo::set_parameters - invalid thermal diffusion %f\n", params.thermal_diffusion);
+  /*if (!check_float(params.thermal_diffusion) || params.thermal_diffusion < 0) {
+    printf("[ERROR] Eqn_AdvectionDiffusion3DCo::set_parameters - invalid thermal diffusion %f\n", params.thermal_diffusion);
     return false;
   }
 
   _thermal_diffusion.coefficient = params.thermal_diffusion;
-
+  */
   if (!_u_diffusion.initialize_storage(this->_nx+1, this->_ny, this->_nz, this->_hx, this->_hy, this->_hz, &_u, &_deriv_udt)) {
-    printf("[ERROR] Eqn_IncompressibleNS3DCo::set_parameters - failed on _u_diffusion initialization\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3DCo::set_parameters - failed on _u_diffusion initialization\n");
     return false;
   }
 
   if (!check_float(params.viscosity) || params.viscosity < 0) {
-    printf("[ERROR] Eqn_IncompressibleNS3DCo::set_parameters - invalid viscosity %f\n", params.viscosity);
+    printf("[ERROR] Eqn_AdvectionDiffusion3DCo::set_parameters - invalid viscosity %f\n", params.viscosity);
     return false;
   }
   _u_diffusion.coefficient = params.viscosity;
 
   if (!_v_diffusion.initialize_storage(this->_nx, this->_ny+1, this->_nz, this->_hx, this->_hy, this->_hz, &_v, &_deriv_vdt)) {
-    printf("[ERROR] Eqn_IncompressibleNS3DCo::set_parameters - failed on _v_diffusion initialization\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3DCo::set_parameters - failed on _v_diffusion initialization\n");
     return false;
   }
   _v_diffusion.coefficient = params.viscosity;
 
   if (!_w_diffusion.initialize_storage(this->_nx, this->_ny, this->_nz+1, this->_hx, this->_hy, this->_hz, &_w, &_deriv_wdt)) {
-    printf("[ERROR] Eqn_IncompressibleNS3DCo::set_parameters - failed on _w_diffusion initialization\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3DCo::set_parameters - failed on _w_diffusion initialization\n");
     return false;
   }
   _w_diffusion.coefficient = params.viscosity;
@@ -579,15 +639,15 @@ Eqn_IncompressibleNS3DCo<T>::set_parameters(const Eqn_IncompressibleNS3DParams<T
 
   // set up bc's & transfers here
   this->_local_bc = params.flow_bc;
-  this->_local_thermalbc = this->_thermalbc;
+  //this->_local_thermalbc = this->_thermalbc;
   if (negx_image != -1) {
     _local_bc.xneg.type = BC_NONE;
-    _local_thermalbc.xneg.type = BC_NONE;
+    //_local_thermalbc.xneg.type = BC_NONE;
   }
 
   if (posx_image != -1) {
     _local_bc.xpos.type = BC_NONE;
-    _local_thermalbc.xpos.type = BC_NONE;
+    //_local_thermalbc.xpos.type = BC_NONE;
   }
 
   if (posx_image != -1) {
@@ -596,35 +656,35 @@ Eqn_IncompressibleNS3DCo<T>::set_parameters(const Eqn_IncompressibleNS3DParams<T
 
     _u_posx_hdl = CoArrayManager::barrier_allocate(uto, ufrom);
     if (_u_posx_hdl == -1)
-      printf("[ERROR] Eqn_IncompressibleNS3DCo::initialize_storage - failed to allocate _u_posx_hdl\n");
+      printf("[ERROR] Eqn_AdvectionDiffusion3DCo::initialize_storage - failed to allocate _u_posx_hdl\n");
 
     Region3D vto   = _v                .region(this->_nx)()();
     Region3D vfrom = _v.co(posx_image)->region(0)()();
 
     _v_posx_hdl = CoArrayManager::barrier_allocate(vto, vfrom);
     if (_v_posx_hdl == -1)
-      printf("[ERROR] Eqn_IncompressibleNS3DCo::initialize_storage - failed to allocate _v_posx_hdl\n");
+      printf("[ERROR] Eqn_AdvectionDiffusion3DCo::initialize_storage - failed to allocate _v_posx_hdl\n");
 
     Region3D wto   = _w                .region(this->_nx)()();
     Region3D wfrom = _w.co(posx_image)->region(0)()();
 
     _w_posx_hdl = CoArrayManager::barrier_allocate(wto, wfrom);
     if (_w_posx_hdl == -1)
-      printf("[ERROR] Eqn_IncompressibleNS3DCo::initialize_storage - failed to allocate _w_posx_hdl\n");
+      printf("[ERROR] Eqn_AdvectionDiffusion3DCo::initialize_storage - failed to allocate _w_posx_hdl\n");
     
-    Region3D tto   = _temp                .region(this->_nx)()();
-    Region3D tfrom = _temp.co(posx_image)->region(0)()();
+    //Region3D tto   = _temp                .region(this->_nx)()();
+    //Region3D tfrom = _temp.co(posx_image)->region(0)()();
 
-    _t_posx_hdl = CoArrayManager::barrier_allocate(tto, tfrom);
-    if (_t_posx_hdl == -1)
-      printf("[ERROR] Eqn_IncompressibleNS3DCo::initialize_storage - failed to allocate _t_posx_hdl\n");
+    //_t_posx_hdl = CoArrayManager::barrier_allocate(tto, tfrom);
+    //if (_t_posx_hdl == -1)
+    //  printf("[ERROR] Eqn_AdvectionDiffusion3DCo::initialize_storage - failed to allocate _t_posx_hdl\n");
 
   }
   else {
     _u_posx_hdl = CoArrayManager::barrier_allocate();
     _v_posx_hdl = CoArrayManager::barrier_allocate();
     _w_posx_hdl = CoArrayManager::barrier_allocate();
-    _t_posx_hdl = CoArrayManager::barrier_allocate();
+    //_t_posx_hdl = CoArrayManager::barrier_allocate();
   }  
 
   if (negx_image != -1) {
@@ -649,37 +709,38 @@ Eqn_IncompressibleNS3DCo<T>::set_parameters(const Eqn_IncompressibleNS3DParams<T
     if (_w_negx_hdl == -1)
       printf("[ERROR] Sol_MultigridPressure3DDevice::initialize_storage - failed to allocate _w_negx_hdl\n");
 
-    Region3D tto   = _temp                .region(-1)()();
-    Region3D tfrom = _temp.co(negx_image)->region(this->_nx-1)()();
+   // Region3D tto   = _temp                .region(-1)()();
+   // Region3D tfrom = _temp.co(negx_image)->region(this->_nx-1)()();
 
-    _t_negx_hdl = CoArrayManager::barrier_allocate(tto, tfrom);
+    /*_t_negx_hdl = CoArrayManager::barrier_allocate(tto, tfrom);
     if (_t_negx_hdl == -1)
       printf("[ERROR] Sol_MultigridPressure3DDevice::initialize_storage - failed to allocate _t_negx_hdl\n");
-
+    */
   }
   else {
     _u_negx_hdl = CoArrayManager::barrier_allocate();
     _v_negx_hdl = CoArrayManager::barrier_allocate();
     _w_negx_hdl = CoArrayManager::barrier_allocate();
-    _t_negx_hdl = CoArrayManager::barrier_allocate();
+    //_t_negx_hdl = CoArrayManager::barrier_allocate();
   }  
 
   do_halo_exchange_uvw();
   if (!apply_3d_mac_boundary_conditions_level1(_u, _v, _w, _local_bc, this->_hx, this->_hy, this->_hz)) {
-    printf("[ERROR] Eqn_IncompressibleNS3DCo::set_parameters - failed on enforcing flow boundary conditions\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3DCo::set_parameters - failed on enforcing flow boundary conditions\n");
     return false;  
   }
 
-  do_halo_exchange_t();
+  /*do_halo_exchange_t();
   if (!apply_3d_boundary_conditions_level1(_temp, _local_thermalbc, this->_hx, this->_hy, this->_hz)) {
-    printf("[ERROR] Eqn_IncompressibleNS3DCo::set_parameters - failed on enforcing thermal boundary conditions\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3DCo::set_parameters - failed on enforcing thermal boundary conditions\n");
     return false;  
   }
+  */
 
   _deriv_udt.clear_zero();
   _deriv_vdt.clear_zero();
   _deriv_wdt.clear_zero();
-  _deriv_tempdt.clear_zero();
+  //_deriv_tempdt.clear_zero();
 
   // all grid layouts should match
   if (!_u.check_layout_match(_v) || 
@@ -687,13 +748,13 @@ Eqn_IncompressibleNS3DCo<T>::set_parameters(const Eqn_IncompressibleNS3DParams<T
       !_u.check_layout_match(_deriv_udt) || 
       !_u.check_layout_match(_deriv_vdt) || 
       !_u.check_layout_match(_deriv_wdt) ||
-      !_u.check_layout_match(_temp) ||
-      !_u.check_layout_match(_deriv_tempdt) ||
-      !_u.check_layout_match(_last_deriv_tempdt) ||
+      //!_u.check_layout_match(_temp) ||
+      //!_u.check_layout_match(_deriv_tempdt) ||
+      //!_u.check_layout_match(_last_deriv_tempdt) ||
       !_u.check_layout_match(_last_deriv_udt) ||
       !_u.check_layout_match(_last_deriv_vdt) ||
       !_u.check_layout_match(_last_deriv_wdt)) {
-    printf("[ERROR] Eqn_IncompressibleNS3DCo::set_parameters - grid layouts do not all match\n");
+    printf("[ERROR] Eqn_AdvectionDiffusion3DCo::set_parameters - grid layouts do not all match\n");
     return false;  
   }
 
@@ -704,7 +765,7 @@ Eqn_IncompressibleNS3DCo<T>::set_parameters(const Eqn_IncompressibleNS3DParams<T
 }
 
 template<typename T>
-double Eqn_IncompressibleNS3DCo<T>::get_max_stable_timestep() const
+double Eqn_AdvectionDiffusion3DCo<T>::get_max_stable_timestep() const
 {
   T max_u, max_v, max_w;
   _u.co_reduce_maxabs(max_u);
@@ -722,19 +783,19 @@ double Eqn_IncompressibleNS3DCo<T>::get_max_stable_timestep() const
 
   double minh = min3(this->hx(), this->hy(), this->hz());
 
-  if (thermal_diffusion_coefficient() > 0)
-    step = std::min(step, (minh * minh) / (6 * this->thermal_diffusion_coefficient()));
+  //if (thermal_diffusion_coefficient() > 0)
+  //  step = std::min(step, (minh * minh) / (6 * this->thermal_diffusion_coefficient()));
   if (viscosity_coefficient() > 0)
     step = std::min(step, (minh * minh) / (6 * this->viscosity_coefficient()));
 
-  printf("Eqn_IncompressibleNS3DCo<T>::get_max_stable_timestep - return %f (%f %f %f)\n", step, ut, vt, wt);
+  printf("Eqn_AdvectionDiffusion3DCo<T>::get_max_stable_timestep - return %f (%f %f %f)\n", step, ut, vt, wt);
 
   return step;
 }
 
-template<typename T>
+/*template<typename T>
 void 
-Eqn_IncompressibleNS3DCo<T>::add_thermal_force()
+Eqn_AdvectionDiffusion3DCo<T>::add_thermal_force()
 {
   // apply thermal force by adding -gkT to dvdt (let g = -1, k = 1, so this is just dvdt += T)
   //_advection_solver.deriv_vdt.linear_combination((T)1.0, _advection_solver.deriv_vdt, (T)1.0, _thermal_solver.phi);
@@ -761,17 +822,17 @@ Eqn_IncompressibleNS3DCo<T>::add_thermal_force()
   KernelWrapper wrapper;
   wrapper.PreKernel();
 
-  Eqn_IncompressibleNS3D_add_thermal_force<<<Dg, Db, 0, ThreadManager::get_compute_stream()>>>(uvw, direction_mult * this->_gravity * this->_bouyancy, &_temp.at(0,0,0),
-    _temp.xstride(), _temp.ystride(), _temp.stride(this->_vertical_direction), this->nx(), this->ny(), this->nz(), 
-    blocksInY, 1.0f / (float)blocksInY);
+  //Eqn_AdvectionDiffusion3D_add_thermal_force<<<Dg, Db, 0, ThreadManager::get_compute_stream()>>>(uvw, direction_mult * this->_gravity * this->_bouyancy, &_temp.at(0,0,0),
+  //  _temp.xstride(), _temp.ystride(), _temp.stride(this->_vertical_direction), this->nx(), this->ny(), this->nz(), 
+  //  blocksInY, 1.0f / (float)blocksInY);
 
-  if (!wrapper.PostKernel("Eqn_IncompressibleNS3D_add_thermal_force"))
+  if (!wrapper.PostKernel("Eqn_AdvectionDiffusion3D_add_thermal_force"))
     this->add_error();
 
-}
+}*/
 
 template<typename T>
-bool Eqn_IncompressibleNS3DCo<T>::advance_one_step(double dt)
+bool Eqn_AdvectionDiffusion3DCo<T>::advance_one_step(double dt)
 {
   this->clear_error();
   this->num_steps++;
@@ -786,28 +847,29 @@ bool Eqn_IncompressibleNS3DCo<T>::advance_one_step(double dt)
   }
 
   // eventually this will be replaced with a grid-wide operation.
-  add_thermal_force();
+  //add_thermal_force();
 
   // update dTdt
 
-  check_ok(_thermal_solver.solve());   // updates dTdt, overwrites whatever is there
+  /*check_ok(_thermal_solver.solve());   // updates dTdt, overwrites whatever is there
   if (thermal_diffusion_coefficient() > 0) {
     check_ok(_thermal_diffusion.solve()); // dTdt += k \nabla^2 T
   }
-
+  */
   T ab_coeff = -dt*dt / (2 * this->_lastdt);
 
   // advance T 
-  if (this->_time_step == TS_ADAMS_BASHFORD2 && this->_lastdt > 0) {
+  /*if (this->_time_step == TS_ADAMS_BASHFORD2 && this->_lastdt > 0) {
     check_ok(_temp.linear_combination((T)1.0, _temp, (T)(dt - ab_coeff), _deriv_tempdt));
     check_ok(_temp.linear_combination((T)1.0, _temp, (T)ab_coeff, _last_deriv_tempdt));
   } 
   else {
     check_ok(_temp.linear_combination((T)1.0, _temp, (T)dt, _deriv_tempdt));
   }
-
-  do_halo_exchange_t();
-  check_ok(apply_3d_boundary_conditions_level1_nocorners(_temp, this->_local_thermalbc, this->_hx, this->_hy, this->_hz));
+  */
+  
+  //do_halo_exchange_t();
+  //check_ok(apply_3d_boundary_conditions_level1_nocorners(_temp, this->_local_thermalbc, this->_hx, this->_hy, this->_hz));
 
   // advance u,v,w
   if (this->_time_step == TS_ADAMS_BASHFORD2 && this->_lastdt > 0) {
@@ -830,70 +892,28 @@ bool Eqn_IncompressibleNS3DCo<T>::advance_one_step(double dt)
   // copy state for AB2
   if (this->_time_step == TS_ADAMS_BASHFORD2) {
     this->_lastdt = dt;
-    _last_deriv_tempdt.copy_all_data(_deriv_tempdt);
+    //_last_deriv_tempdt.copy_all_data(_deriv_tempdt);
     _last_deriv_udt.copy_all_data(_deriv_udt);
     _last_deriv_vdt.copy_all_data(_deriv_vdt);
     _last_deriv_wdt.copy_all_data(_deriv_wdt);
   }
 
   // enforce incompressibility - this enforces bc's before and after projection
-  check_ok(_projection_solver.solve(this->_max_divergence));
+  //check_ok(_projection_solver.solve(this->_max_divergence));
 
   return !this->any_error();
 }
 
-/*
-template<typename T>
-double Eqn_IncompressibleNS3DMPI<T>::get_max_stable_timestep() const
-{
-  T max_u, max_v, max_w;
-  _u.reduce_maxabs(max_u);
-  _v.reduce_maxabs(max_v);
-  _w.reduce_maxabs(max_w);
-  double ut = this->hx() / max_u;
-  double vt = this->hy() / max_v;
-  double wt = this->hz() / max_w;
 
-  if (!check_float(ut)) ut = 1e10;
-  if (!check_float(vt)) vt = 1e10;
-  if (!check_float(wt)) wt = 1e10;
 
-  double step = this->_cfl_factor * min3(ut, vt, wt);
-
-  double minh = min3(this->hx(), this->hy(), this->hz());
-
-  //if (thermal_diffusion_coefficient() > 0)
-  //  step = std::min(step, (minh * minh) / (6 * thermal_diffusion_coefficient()));
-  if (viscosity_coefficient() > 0)
-    step = std::min(step, (minh * minh) / (6 * viscosity_coefficient()));
-
-  printf("Eqn_IncompressibleNS3D<T>::get_max_stable_timestep - return %f\n", step);
-
-  return step;
-}
-
-template<typename T>
-void Eqn_IncompressibleNS3DMPI<T>::do_halo_exchange_uvw_mpi()
-{
-   mpimanager_u.data_exchangewithneighbors();
-   mpimanager_v.data_exchangewithneighbors();
-   mpimanager_w.data_exchangewithneighbors();
-}
-
-Eqn_IncompressibleNS3DMPI(CoarrayMPIManager &mpiinfo)
-{
-   mpimanager_main(mpiinfo);
-}*/
-
-template class Eqn_IncompressibleNS3DBase<float>;
-template class Eqn_IncompressibleNS3D<float>;
-template class Eqn_IncompressibleNS3DCo<float>;
-//template class Eqn_IncompressibleNS3DMPI<float>;
+template class Eqn_AdvectionDiffusion3DBase<float>;
+template class Eqn_AdvectionDiffusion3D<float>;
+template class Eqn_AdvectionDiffusion3DCo<float>;
 
 #ifdef OCU_DOUBLESUPPORT
-template class Eqn_IncompressibleNS3DBase<double>;
-template class Eqn_IncompressibleNS3D<double>;
-//template class Eqn_IncompressibleNS3DMPI<double>;
+template class Eqn_AdvectionDiffusion3DBase<double>;
+template class Eqn_AdvectionDiffusion3D<double>;
+template class Eqn_AdvectionDiffusion3DCo<double>;
 #endif
 
 

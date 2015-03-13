@@ -1,0 +1,4 @@
+1. timing_pool.cpp is not thread safe.  added #pragma omp single to void add_timing(const char *name, float ms) 
+2. without #include<cstdio> in coarray.h, the code won't complie.
+3. Why do those testcases call constructers for all classes for each test case?
+

@@ -1,0 +1,10 @@
+*.cmake 
+*.o
+*.depend
+/CMakeFiles
+/Testing
+*/CMakeFiles
+Makefile
+CMakeCache.txt
+*.a
+*.nc

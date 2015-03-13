@@ -34,8 +34,12 @@ protected:
   bool        _failed;
   ocu::CPUTimer _timer;
   bool        _multi;
+  bool        _mpiOn;
 
   UnitTest(const char *name, bool multigpu);
+  // overloaded constructor, use std::string so it will not be confused with previous boolean
+  // so we know this constructor is for mpi
+  UnitTest(const char *name, std::string mpion);
 
   void assert_equal_double(double, double, double tol, const char *filename, int lineno);
   void assert_equal_float(float, float, float tol, const char *filename, int lineno);
@@ -53,6 +57,7 @@ protected:
 public:
 
   bool is_multi() const { return _multi; }
+  bool is_MpiOn() const { return _mpiOn; }
   bool failed() const { return _failed; }
   const char *name() const { return _name.c_str(); }
 
@@ -60,6 +65,12 @@ public:
     _timer.start();
     // need to forge ahead so that all threads will participate in all barriers.
     if (is_multi()) set_forge_ahead(true);
+    if (is_MpiOn())
+    {
+    	//previous is_multi is for OpenMP while this is_MpiOn is for MPI
+    	// Tentatively set up a barrier.
+
+    }
     run();
   }
 };
@@ -110,6 +121,14 @@ public:
    TEST() : UnitTest(#TEST, true) { } \
    int dummy_so_semi_colon_will_be_parsed
 
+//MPI GPU tests
+#define DECLARE_UNITTEST_MPIGPU_BEGIN(TEST) \
+  template<typename DUMMY_TYPE> \
+  class TEST : public UnitTest { \
+  public: \
+   TEST() : UnitTest(#TEST, std::string("on")) { } \
+   int dummy_so_semi_colon_will_be_parsed
+
 
 #define DECLARE_UNITTEST_MULTIGPU_DOUBLE_BEGIN(TEST) \
   template<typename DUMMY_TYPE> \
@@ -137,6 +156,7 @@ public:
 
   bool run_all_tests();
   bool run_single_gpu_tests();
+  bool run_MPI_enabled_tests();
   bool run_tests(const std::vector<std::string> &tests);
   void print_tests();
 

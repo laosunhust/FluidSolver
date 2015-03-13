@@ -106,6 +106,8 @@ public:
 
 
     void add_timing(const char *name, float ms) {
+        #pragma omp single
+        {
         if (_table.count(name)) {
             _table[name].total += ms;
             _table[name].count++;
@@ -115,6 +117,7 @@ public:
             _table[name].count = 1;
         }
         _alltime += ms;
+        }
     }
 
     void print() {
